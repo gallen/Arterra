@@ -15,7 +15,7 @@ public static class StartupPlacer {
     }
     public static void Initialize() {
         Arterra.Configuration.Quality.Terrain rSettings = Config.CURRENT.Quality.Terrain;
-        Arterra.Configuration.Generation.Surface surface = Config.CURRENT.Generation.Surface.value;
+        Arterra.Data.Generation.Surface surface = Config.CURRENT.Generation.Surface.value;
         SurfaceFinder.SetInt("continentalSampler", surface.ContinentalIndex);
         SurfaceFinder.SetInt("majorWarpSampler", surface.MajorWarpIndex);
         SurfaceFinder.SetInt("minorWarpSampler", surface.MinorWarpIndex);

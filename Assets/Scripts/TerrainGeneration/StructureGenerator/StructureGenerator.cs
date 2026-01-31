@@ -196,8 +196,8 @@ public static class Generator
     /// <see cref="SystemProtocol.Startup"/> </summary>
     public static void PresetData()
     {
-        Configuration.Generation.Map mesh = Config.CURRENT.Generation.Terrain.value;
-        Configuration.Generation.Surface surface = Config.CURRENT.Generation.Surface.value;
+        Data.Generation.Map mesh = Config.CURRENT.Generation.Terrain.value;
+        Data.Generation.Surface surface = Config.CURRENT.Generation.Surface.value;
         Arterra.Data.Structure.Generation structures = Config.CURRENT.Generation.Structures.value;
         Configuration.Quality.Terrain rSettings = Config.CURRENT.Quality.Terrain.value;
         int maxStructurePoints = calculateMaxStructurePoints(structures.maxLoD, rSettings.MaxStructureDepth, structures.StructureChecksPerChunk, structures.LoDFalloff);

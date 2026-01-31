@@ -153,7 +153,7 @@ public static class Generator
     /// <see cref="SystemProtocol.Startup"/> </summary>
     public static void PresetData(){
         Configuration.Quality.Terrain rSettings = Config.CURRENT.Quality.Terrain;
-        Configuration.Generation.Map mesh = Config.CURRENT.Generation.Terrain.value;
+        Data.Generation.Map mesh = Config.CURRENT.Generation.Terrain.value;
 
         //Set Marching Cubes Data
         int numPointsAxes = rSettings.mapChunkSize;

@@ -3,7 +3,7 @@ using System.Linq;
 using UnityEngine;
 using Unity.Collections;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation;
+using Arterra.Data.Generation;
 using Arterra.Data.Material;
 using Arterra.Data.Entity;
 using Arterra.Data.Biome;

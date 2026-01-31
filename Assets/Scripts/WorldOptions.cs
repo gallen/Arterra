@@ -11,6 +11,7 @@ using Biome = Arterra.Data.Biome;
 using Material = Arterra.Data.Material;
 using Structure = Arterra.Data.Structure;
 using Intrinsic = Arterra.Data.Intrinsic;
+using Generation = Arterra.Data.Generation;
 
 namespace Arterra.Configuration {
     /// <summary>
