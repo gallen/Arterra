@@ -7,7 +7,7 @@ using Arterra.Data.Item;
 using Arterra.Data.Intrinsic;
 using Arterra.Engine.Terrain;
 using Arterra.Core.Events;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 
 [RequireComponent(typeof(Camera))]
 public class ArmorController : PanelNavbarManager.INavPanel {

@@ -11,7 +11,7 @@ using UnityEngine;
 using UnityEngine.UI;
 using Arterra.Configuration;
 using Arterra.Data.Item;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using Arterra.Data.Material;
 
 namespace Arterra.Configuration.Gameplay{

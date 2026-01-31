@@ -6,6 +6,7 @@ using Arterra.Configuration;
 using Arterra.Data.Material;
 using Arterra.Data.Item;
 using Arterra.Configuration.Gameplay.Player;
+using Arterra.Core.Events;
 using Utils;
 
 namespace Arterra.Configuration.Gameplay.Player {
@@ -50,7 +51,7 @@ public class Interaction : ICloneable{
 }
 
 
-namespace Arterra.Core.Player{
+namespace Arterra.GamePlay{
     /// <summary>The manager responsible for controlling all player interactions with the world </summary>
     public static class PlayerInteraction {
         private static Catalogue<MaterialData> matInfo => Config.CURRENT.Generation.Materials.value.MaterialDictionary;
@@ -113,7 +114,7 @@ namespace Arterra.Core.Player{
             if (selMat is not PlaceableItem setting) return;
             if (!setting.IsSolid || !matInfo.Contains(setting.MaterialName)) return;
 
-            PlayerHandler.data.eventCtrl.RaiseEvent(Events.GameEvent.Action_PlaceTerrain, PlayerHandler.data, null, hitPt);
+            PlayerHandler.data.eventCtrl.RaiseEvent(GameEvent.Action_PlaceTerrain, PlayerHandler.data, null, hitPt);
             CPUMapManager.Terraform(hitPt, settings.TerraformRadius, (GCoord, speed) => HandleAddSolid(
                 InventoryController.Selected,
                 GCoord,
@@ -129,7 +130,7 @@ namespace Arterra.Core.Player{
                 return;
             }
 
-            PlayerHandler.data.eventCtrl.RaiseEvent(Events.GameEvent.Action_RemoveTerrain, PlayerHandler.data, null, hitPt);
+            PlayerHandler.data.eventCtrl.RaiseEvent(GameEvent.Action_RemoveTerrain, PlayerHandler.data, null, hitPt);
             CPUMapManager.Terraform(hitPt, settings.TerraformRadius,
                 RemoveSolidBareHand, CallOnMapRemoving);
         }

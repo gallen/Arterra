@@ -4,7 +4,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using Arterra.Data.Material;
 using Arterra.Core.Storage;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using Arterra.Configuration;
 
 namespace Arterra.Data.Item

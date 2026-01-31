@@ -50,7 +50,7 @@ namespace Arterra.Configuration.Gameplay.Player {
     }
 }
 
-namespace Arterra.Core.Player {
+namespace Arterra.GamePlay {
     /// <summary> Manager controlling the player's health, regenertion
     /// and base attack functionalities.  </summary>
     public class PlayerVitality

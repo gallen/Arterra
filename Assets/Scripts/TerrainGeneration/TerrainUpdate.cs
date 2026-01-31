@@ -6,7 +6,7 @@ using Unity.Jobs;
 using Arterra.Configuration;
 using Arterra.Data.Intrinsic;
 using Arterra.Core.Storage;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using System.Threading;
 using System;
 

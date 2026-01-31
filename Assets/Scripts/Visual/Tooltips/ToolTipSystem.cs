@@ -5,7 +5,7 @@ using Arterra.Data.Entity;
 using Utils;
 using UnityEditor;
 using Arterra.Configuration;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 
 namespace Arterra.UI.ToolTips {
     /// <summary>

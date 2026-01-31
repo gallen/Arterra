@@ -7,7 +7,7 @@ using Arterra.Data.Item;
 using Arterra.Data.Entity;
 
 using Arterra.Core.Storage;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using Arterra.Core.Events;
 
 [CreateAssetMenu(menuName = "Generation/Entity/Boat")]

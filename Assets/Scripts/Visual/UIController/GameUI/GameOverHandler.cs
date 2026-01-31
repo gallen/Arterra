@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using UnityEngine.UI;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 
 public class GameOverHandler
 {

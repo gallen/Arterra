@@ -2,7 +2,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using Arterra.Configuration;
 using Arterra.Engine.Terrain;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 
 public static class PlayerCrosshair {
     private static GameObject Crosshair;

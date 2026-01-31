@@ -7,8 +7,8 @@ using System.Linq;
 using Arterra.Engine.Terrain;
 using Arterra.Core.Storage;
 using Arterra.Data.Material;
-using Arterra.Core.Player;
-using static Arterra.Core.Player.PlayerInteraction;
+using Arterra.GamePlay;
+using static Arterra.GamePlay.PlayerInteraction;
 using Material = Arterra.Data.Material;
 using Arterra.Configuration;
 

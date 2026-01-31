@@ -9,7 +9,7 @@ using Arterra.Data.Entity;
 using Arterra.Data.Biome;
 using Arterra.Configuration.Quality;
 using Arterra.Core.Storage;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using Material = Arterra.Data.Material;
 using Arterra.Data.Structure;
 

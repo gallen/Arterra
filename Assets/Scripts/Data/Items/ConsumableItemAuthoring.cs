@@ -2,7 +2,7 @@ using Utils;
 using UnityEngine;
 using Newtonsoft.Json;
 using Unity.Mathematics;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using Arterra.Configuration;
 
 namespace Arterra.Data.Item{

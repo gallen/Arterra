@@ -6,7 +6,7 @@ using UnityEngine.Rendering;
 using Arterra.Configuration;
 using Arterra.Core.Storage;
 using Arterra.Engine.Terrain;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 
 namespace Arterra.Configuration.Gameplay{
     /// <summary> Settings controlling environment constants of the world. Or aspects of 

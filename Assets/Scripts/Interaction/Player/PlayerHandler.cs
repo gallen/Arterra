@@ -48,7 +48,7 @@ namespace Arterra.Configuration.Gameplay{
     }
 }
 
-namespace Arterra.Core.Player{
+namespace Arterra.GamePlay{
     /// <summary> The root handler of the currently active player.  </summary>
     /// <remarks> If <see cref="PlayerStreamer"/> were analogous to the 
     /// player's current body, this class would be the player's soul </remarks>///  

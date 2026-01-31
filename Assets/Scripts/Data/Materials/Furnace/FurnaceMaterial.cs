@@ -8,7 +8,7 @@ using TMPro;
 using Arterra.Data.Intrinsic.Furnace;
 using Arterra.Data.Item;
 using Arterra.Engine.Terrain;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using Arterra.Configuration;
 using Utils;
 

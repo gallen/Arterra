@@ -10,7 +10,7 @@ using Arterra.Configuration.Gameplay.Player;
 using Arterra.Core.Events;
 
 
-namespace Arterra.Core.Player {
+namespace Arterra.GamePlay {
     /// <summary> The entity instance of the player holding all data specific
     /// to a single instance of the player. Note, multiple PlayerStreamers can 
     /// exist at the same time. </summary>

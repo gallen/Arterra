@@ -14,7 +14,7 @@ using System.Linq;
 using Arterra.Configuration;
 using Arterra.Data.Entity;
 using Arterra.Engine.Terrain;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 using Arterra.Engine.Terrain.Readback;
 using Utils;
 

@@ -4,8 +4,8 @@ using Unity.Mathematics;
 using UnityEngine;
 using Arterra.Data.Material;
 using Arterra.Core.Storage;
-using static Arterra.Core.Player.PlayerInteraction;
-using Arterra.Core.Player;
+using static Arterra.GamePlay.PlayerInteraction;
+using Arterra.GamePlay;
 using Arterra.Core.Events;
 using Arterra.Configuration;
 

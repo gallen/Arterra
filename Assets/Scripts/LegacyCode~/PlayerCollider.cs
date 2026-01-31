@@ -5,7 +5,7 @@ using Newtonsoft.Json;
 using static Arterra.Core.Storage.CPUMapManager;
 using Arterra.Core.Storage;
 using Arterra.Data.Entity;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 
 /*
 Future Note: Make this done on a job system

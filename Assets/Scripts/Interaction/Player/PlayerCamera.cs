@@ -30,7 +30,7 @@ namespace Arterra.Configuration.Gameplay.Player {
     }
 }
 
-namespace Arterra.Core.Player{
+namespace Arterra.GamePlay{
     /// <summary> Responsible for managing the player's camera
     /// and its movement and angles within the game.  </summary>
     public class PlayerCamera {
@@ -177,7 +177,7 @@ namespace Arterra.Core.Player{
                 }
 
                 RefTuple<(float, float)> cxt = (GetAngleX(camera.camTsf.rotation), camera.Rot.y);
-                PlayerHandler.data.eventCtrl.RaiseEvent(Events.GameEvent.Action_LookGradual, PlayerHandler.data, null, cxt);
+                PlayerHandler.data.eventCtrl.RaiseEvent(GameEvent.Action_LookGradual, PlayerHandler.data, null, cxt);
             }
         }
 
@@ -221,7 +221,7 @@ namespace Arterra.Core.Player{
                 }
                 SetCameraOffset(camera);
                 RefTuple<(float, float)> cxt = (GetAngleX(camera.camTsf.rotation), camera.Rot.y);
-                PlayerHandler.data.eventCtrl.RaiseEvent(Events.GameEvent.Action_LookGradual, PlayerHandler.data, null, cxt);
+                PlayerHandler.data.eventCtrl.RaiseEvent(GameEvent.Action_LookGradual, PlayerHandler.data, null, cxt);
             }
 
             private void SetCameraOffset(PlayerCamera cm) {
@@ -293,7 +293,7 @@ namespace Arterra.Core.Player{
                 }
                 SetCameraOffset(camera);
                 RefTuple<(float, float)> cxt = (GetAngleX(camera.camTsf.rotation), rotation);
-                PlayerHandler.data.eventCtrl.RaiseEvent(Events.GameEvent.Action_LookGradual, PlayerHandler.data, null, cxt);
+                PlayerHandler.data.eventCtrl.RaiseEvent(GameEvent.Action_LookGradual, PlayerHandler.data, null, cxt);
             }
             
             private static void SetCameraOffset(PlayerCamera cm) {

@@ -524,7 +524,7 @@ public sealed class CraftingMenuController : PanelNavbarManager.INavPanel {
         public Grid display;
         public CraftingRecipe.Ingredient[] GridData;
         public InventoryController.Inventory NonMatInventory;
-        internal static ItemContext GetCraftingCxt(ItemContext cxt) => cxt.SetupScenario(Arterra.Core.Player.PlayerHandler.data, ItemContext.Scenario.ActivePlayerCraftingGrid);
+        internal static ItemContext GetCraftingCxt(ItemContext cxt) => cxt.SetupScenario(Arterra.GamePlay.PlayerHandler.data, ItemContext.Scenario.ActivePlayerCraftingGrid);
         public CraftingGrid(GameObject parent, int GridWidth, int index) {
             int AxisWidth = GridWidth + 1;
             NonMatInventory = new InventoryController.Inventory(GridWidth * GridWidth);

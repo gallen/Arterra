@@ -2,7 +2,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 using Arterra.Configuration;
-using Arterra.Core.Player;
+using Arterra.GamePlay;
 
 public static class PlayerStatDisplay
 {
