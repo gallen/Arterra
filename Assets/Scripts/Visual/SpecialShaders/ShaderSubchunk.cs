@@ -6,7 +6,7 @@ using UnityEngine.Rendering;
 using Utils;
 using Arterra.Configuration;
 using Arterra.Configuration.Quality;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 
 public class ShaderSubchunk : IOctreeChunk {
     /// <exclude />

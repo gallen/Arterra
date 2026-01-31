@@ -3,8 +3,9 @@ using UnityEngine;
 using static UtilityBuffers;
 using Unity.Mathematics;
 using Arterra.Configuration;
+using Arterra.Engine.Terrain;
 
-namespace Arterra.Core.Terrain.Surface{
+namespace Arterra.Engine.Terrain.Surface{
 
 /// <summary>
 /// A manager unique for every terrain chunk responsible for creating and holding onto

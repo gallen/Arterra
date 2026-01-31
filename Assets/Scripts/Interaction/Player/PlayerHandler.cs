@@ -2,7 +2,7 @@ using UnityEngine;
 using System.IO;
 using System;
 using Arterra.Core.Events;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 
 
 namespace Arterra.Configuration.Gameplay.Player{

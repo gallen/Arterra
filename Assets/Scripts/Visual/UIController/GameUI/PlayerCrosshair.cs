@@ -1,7 +1,7 @@
 using Unity.Mathematics;
 using UnityEngine;
 using Arterra.Configuration;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
 
 public static class PlayerCrosshair {

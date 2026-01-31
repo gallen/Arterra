@@ -6,9 +6,9 @@ using System.Linq;
 using Unity.Collections;
 using Utils;
 using Arterra.Configuration.Quality;
-using static Arterra.Core.Terrain.OctreeTerrain;
+using static Arterra.Engine.Terrain.OctreeTerrain;
 
-namespace Arterra.Core.Terrain.Readback{
+namespace Arterra.Engine.Terrain.Readback{
 /// <summary>
 /// The readback system is responsible for reading back meshes from the GPU and 
 /// intermediately rendering the meshes directly from the GPU while this is happening.

@@ -11,7 +11,7 @@ using Arterra.Configuration.Quality;
 using Arterra.Core.Storage;
 using Arterra.Core.Player;
 
-namespace Arterra.Core.Terrain{
+namespace Arterra.Engine.Terrain{
 /// <summary>  The factory protocol for the collective game system. This
 /// protocol tracks the proper process to facilitate large 
 /// context switches within the game. Any new systems should

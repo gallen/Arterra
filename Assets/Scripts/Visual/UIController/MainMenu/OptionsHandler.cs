@@ -6,7 +6,7 @@ using TMPro;
 using static SegmentedUIEditor;
 using Arterra.Configuration;
 using Unity.Mathematics;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Storage;
 using System.Collections;
 using static Arterra.Core.Storage.World;

@@ -5,7 +5,7 @@ using UnityEngine.Animations;
 using UnityEngine.Rendering;
 using Arterra.Configuration;
 using Arterra.Core.Storage;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
 
 namespace Arterra.Configuration.Gameplay{

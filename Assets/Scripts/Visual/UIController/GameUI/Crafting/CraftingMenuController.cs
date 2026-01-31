@@ -7,7 +7,7 @@ using UnityEngine.UI;
 using Arterra.Configuration;
 using Arterra.Configuration.Generation.Item;
 using Arterra.Configuration.Intrinsic;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 
 
 public sealed class CraftingMenuController : PanelNavbarManager.INavPanel {

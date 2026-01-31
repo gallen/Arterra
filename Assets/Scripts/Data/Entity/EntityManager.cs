@@ -13,9 +13,9 @@ using System.Threading.Tasks;
 using System.Linq;
 using Arterra.Configuration;
 using Arterra.Configuration.Generation.Entity;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
-using Arterra.Core.Terrain.Readback;
+using Arterra.Engine.Terrain.Readback;
 using Utils;
 
 public static class EntityManager

@@ -2,13 +2,13 @@ using UnityEngine;
 using static UtilityBuffers;
 using Unity.Mathematics;
 using Arterra.Configuration;
-using Arterra.Core.Terrain.Readback;
+using Arterra.Engine.Terrain.Readback;
 using Arterra.Configuration.Generation.Structure;
 using Utils;
 using Arterra.Core.Storage;
 using Arterra.Configuration.Generation.Entity;
 
-namespace Arterra.Core.Terrain.Structure{
+namespace Arterra.Engine.Terrain.Structure{
 /// <summary>
 /// A manager unique for every terrain chunk responsible for creating and holding onto
 /// intermediate structure information required by the chunk during the terrain

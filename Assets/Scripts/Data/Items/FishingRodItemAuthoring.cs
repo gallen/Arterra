@@ -9,7 +9,7 @@ using Arterra.Core.Player;
 using Arterra.Core.Events;
 using System.Collections.Generic;
 using System.Linq;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 
 namespace Arterra.Configuration.Generation.Item
 {

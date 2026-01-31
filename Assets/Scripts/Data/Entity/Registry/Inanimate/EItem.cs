@@ -5,8 +5,8 @@ using Newtonsoft.Json;
 using Arterra.Configuration;
 using Arterra.Configuration.Generation.Item;
 using Arterra.Configuration.Generation.Entity;
-using static Arterra.Core.Terrain.Readback.IVertFormat;
-using Arterra.Core.Terrain.Readback;
+using static Arterra.Engine.Terrain.Readback.IVertFormat;
+using Arterra.Engine.Terrain.Readback;
 using Arterra.Core.Storage;
 using Arterra.Core.Events;
 

@@ -7,7 +7,7 @@ using Unity.Collections;
 using Arterra.Configuration;
 using Arterra.Core.Storage;
 
-namespace Arterra.Core.Terrain.Map{
+namespace Arterra.Engine.Terrain.Map{
 /// <summary> A manager unique for every terrain chunk responsible for creating 
 /// and grouping and abstracting various types of instructions used to
 /// create the final 3D terrain map and the visual mesh. </summary>

@@ -51,7 +51,7 @@ namespace Arterra.Configuration.Intrinsic{
     }
 }
 
-namespace Arterra.Core.Terrain{
+namespace Arterra.Engine.Terrain{
 
     /// <summary>
     /// Terrain Update is a static system that handles updates to map entries within <see cref="CPUMapManager"/>. Whenever a

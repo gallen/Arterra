@@ -3,8 +3,8 @@ using UnityEngine;
 using Unity.Mathematics;
 using Arterra.Configuration;
 using Arterra.Configuration.Quality;
-using Arterra.Core.Terrain;
-using Arterra.Core.Terrain.Readback;
+using Arterra.Engine.Terrain;
+using Arterra.Engine.Terrain.Readback;
 
 namespace Arterra.Core.Storage{
     /// <summary> A static centralized gateway for all CPU-side operations to access or attach resources capable of accessing
@@ -201,7 +201,7 @@ namespace Arterra.Core.Storage{
         /// <returns></returns>
         public static bool IsChunkRegisterable(int3 oCCoord, int depth) {
             int3 eCCoord = oCCoord + (1 << depth);
-            int3 vCCoord = Terrain.OctreeTerrain.ViewPosCS;
+            int3 vCCoord = OctreeTerrain.ViewPosCS;
             oCCoord = math.clamp(oCCoord, vCCoord - numChunksRadius, vCCoord + numChunksRadius + 1);
             eCCoord = math.clamp(eCCoord, vCCoord - numChunksRadius, vCCoord + numChunksRadius + 1);
             int3 dim = eCCoord - oCCoord;

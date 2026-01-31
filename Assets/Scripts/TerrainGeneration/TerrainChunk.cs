@@ -4,11 +4,11 @@ using Unity.Mathematics;
 using UnityEngine;
 using Utils;
 using Arterra.Configuration;
-using Arterra.Core.Terrain.Readback;
-using static Arterra.Core.Terrain.Readback.IVertFormat;
+using Arterra.Engine.Terrain.Readback;
+using static Arterra.Engine.Terrain.Readback.IVertFormat;
 using Arterra.Core.Storage;
 
-namespace Arterra.Core.Terrain{
+namespace Arterra.Engine.Terrain{
 
     using static OctreeTerrain;
     /// <summary>

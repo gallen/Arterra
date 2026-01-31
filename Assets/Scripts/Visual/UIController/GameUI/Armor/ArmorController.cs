@@ -5,7 +5,7 @@ using Arterra.Configuration;
 using Arterra.Configuration.Generation.Entity;
 using Arterra.Configuration.Generation.Item;
 using Arterra.Configuration.Intrinsic;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Events;
 using Arterra.Core.Player;
 

@@ -6,7 +6,7 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using Utils;
 
-namespace Arterra.Core.Terrain.Readback {
+namespace Arterra.Engine.Terrain.Readback {
     public class AsyncGenInfoReadback {
         private int Allocation = -1;
         private static ComputeShader GenPointRealloc;

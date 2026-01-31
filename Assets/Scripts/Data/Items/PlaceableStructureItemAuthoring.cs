@@ -4,6 +4,7 @@ using Unity.Mathematics;
 using System.Collections.Generic;
 using Utils;
 using System.Linq;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Storage;
 using Arterra.Configuration.Generation.Material;
 using Arterra.Core.Player;
@@ -107,7 +108,7 @@ namespace Arterra.Configuration.Generation.Item {
                 h.item = item;
                 h.cxt = cxt;
                 h.active = true;
-                Core.Terrain.OctreeTerrain.MainLoopUpdateTasks.Enqueue(h);
+                OctreeTerrain.MainLoopUpdateTasks.Enqueue(h);
                 InputPoller.AddKeyBindChange(() => {
                     InputPoller.AddBinding(new ActionBind("Place", h.PlaceStructure, ActionBind.Exclusion.ExcludeLayer),
                     "ITEM::PlaceableStct:PL", "5.0::GamePlay");

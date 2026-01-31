@@ -6,8 +6,8 @@ using Unity.Mathematics;
 using UnityEngine;
 using Arterra.Configuration;
 using Arterra.Configuration.Quality;
-using Arterra.Core.Terrain;
-using Arterra.Core.Terrain.Readback;
+using Arterra.Engine.Terrain;
+using Arterra.Engine.Terrain.Readback;
 
 public class SubChunkShaderGraph{
     public TerrainChunk parent;

@@ -3,9 +3,9 @@ using Unity.Collections;
 using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.Rendering;
-using Arterra.Core.Terrain;
-using Arterra.Core.Terrain.Readback;
-using static Arterra.Core.Terrain.Readback.IVertFormat;
+using Arterra.Engine.Terrain;
+using Arterra.Engine.Terrain.Readback;
+using static Arterra.Engine.Terrain.Readback.IVertFormat;
 using Arterra.Configuration;
 
 public static class SpriteExtruder{

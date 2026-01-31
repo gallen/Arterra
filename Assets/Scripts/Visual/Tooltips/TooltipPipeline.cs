@@ -1,7 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using UnityEngine;
 using Utils;
 

@@ -212,7 +212,7 @@ public static class InputPoller {
         KeyBindChanges = new Queue<Action>();
         AddStackPoll(new ActionBind("BASE", (float _) => SetCursorLock(true)), "CursorLock");
         eventTask = new IndirectUpdate(Update);
-        Arterra.Core.Terrain.OctreeTerrain.MainLoopUpdateTasks.Enqueue(eventTask);
+        Arterra.Engine.Terrain.OctreeTerrain.MainLoopUpdateTasks.Enqueue(eventTask);
         GlobalKeyExclusion = new HashSet<KeyCode>();
         LayerKeyExclusion = new HashSet<KeyCode>();
         GlobalBindExclusion = new HashSet<string>();

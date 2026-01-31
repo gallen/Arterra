@@ -1,7 +1,7 @@
 using System;
 using Unity.Mathematics;
 using UnityEngine;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
 using static Arterra.Core.Player.PlayerInteraction;
 using Arterra.Core.Events;

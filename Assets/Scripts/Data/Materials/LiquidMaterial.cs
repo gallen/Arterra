@@ -4,6 +4,8 @@ using Unity.Burst;
 using Arterra.Core.Storage;
 using static Arterra.Core.Storage.CPUMapManager;
 using Utils;
+using Arterra.Engine.Terrain;
+
 /*
 y
 ^      0  5        z
@@ -109,7 +111,7 @@ namespace Arterra.Configuration.Generation.Material{
                 SetMap(map[i], GCoord + CustomUtility.dP[i], false);
                 //If state changed, add it to be updated
                 if ((((ChangeState >> i) & 0x1) ^ (map[i].IsLiquid ? 1 : 0)) != 0 || map[i].IsSolid)
-                    Core.Terrain.TerrainUpdate.AddUpdate(GCoord + CustomUtility.dP[i]);
+                    TerrainUpdate.AddUpdate(GCoord + CustomUtility.dP[i]);
             }
             return true;
         }

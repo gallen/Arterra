@@ -9,7 +9,7 @@ using System.Collections.Generic;
 using Arterra.Configuration;
 using Arterra.Configuration.Intrinsic;
 using Arterra.Configuration.Generation.Item;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using System.Linq;
 
 public class CraftingRecipeSearch {

@@ -7,7 +7,7 @@ using UnityEngine.UI;
 using TMPro;
 using Arterra.Configuration.Intrinsic.Furnace;
 using Arterra.Configuration.Generation.Item;
-using Arterra.Core.Terrain;
+using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
 using Utils;
 

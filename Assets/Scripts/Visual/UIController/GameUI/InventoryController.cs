@@ -825,7 +825,7 @@ public static class InventoryController {
             Display.Object.transform.SetParent(Menu.transform);
             Display.Object.SetActive(false);
             EventTask = new IndirectUpdate(Update);
-            Arterra.Core.Terrain.OctreeTerrain.MainLoopUpdateTasks.Enqueue(EventTask);
+            Arterra.Engine.Terrain.OctreeTerrain.MainLoopUpdateTasks.Enqueue(EventTask);
         }
 
         public bool SplitNewItem(out IItem nItem) {

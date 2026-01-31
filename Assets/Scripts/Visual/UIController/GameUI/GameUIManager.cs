@@ -53,7 +53,7 @@ public class ScrollingResultDisplay {
         image.sprite = texInfo.Retrieve(resultItem.TexIndex).self;
         image.color = new Color(1, 1, 1, 1);
         if (outputs.Count <= 1) return;
-        Arterra.Core.Terrain.OctreeTerrain.MainCoroutines.Enqueue(UpdateRoutine());
+        Arterra.Engine.Terrain.OctreeTerrain.MainCoroutines.Enqueue(UpdateRoutine());
     }
 
     public void Release() {
