@@ -1,7 +1,7 @@
 using Arterra.Core.Events;
 using Unity.Mathematics;
 using Arterra.Core;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Utils;
 using UnityEditor;
 using Arterra.Configuration;

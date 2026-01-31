@@ -2,9 +2,9 @@ using UnityEngine;
 using Unity.Mathematics;
 using System;
 using Newtonsoft.Json;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Item;
 using Arterra.Core.Storage;
 using Arterra.Configuration.Gameplay.Player;
 using Arterra.Core.Events;
@@ -17,7 +17,7 @@ namespace Arterra.Core.Player {
     /// <remarks>Using the analogy that <see cref="PlayerHandler"/> is the soul of the player, 
     /// <see cref="PlayerStreamer"/> would be a singular corpreal body of the player. </remarks> 
     [CreateAssetMenu(menuName = "Generation/Entity/Player")]
-    public class PlayerStreamer : Configuration.Generation.Entity.Authoring
+    public class PlayerStreamer : Arterra.Data.Entity.Authoring
     {
         /// <summary>Reference to the player's entity settings. See <see cref="PlayerSettings"/></summary>
         public Option<PlayerSettings> _Setting;

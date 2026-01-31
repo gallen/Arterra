@@ -1,8 +1,9 @@
 using Arterra.Core.Events;
 using Newtonsoft.Json;
 using UnityEngine;
+using Arterra.Configuration;
 
-namespace Arterra.Configuration.Generation.Item{
+namespace Arterra.Data.Item{
     [CreateAssetMenu(menuName = "Generation/Items/Bow")] 
     public class BowItemAuthoring : AuthoringTemplate<BowItem> {
         /// <summary>  The maximum durability of the item, the durability it possesses when it is first

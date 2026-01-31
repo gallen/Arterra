@@ -2,8 +2,8 @@ using System;
 using Arterra.Core.Storage;
 using Unity.Mathematics;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Entity;
-using Arterra.Configuration.Generation.Material;
+using Arterra.Data.Entity;
+using Arterra.Data.Material;
 using static Arterra.Core.Storage.CPUMapManager;
 
 public static class TerrainInteractor {

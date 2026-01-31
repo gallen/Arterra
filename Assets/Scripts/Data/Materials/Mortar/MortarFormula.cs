@@ -7,9 +7,11 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
-using Arterra.Configuration.Generation.Item;
-using Arterra.Configuration.Generation.Material;
-namespace Arterra.Configuration.Intrinsic.Mortar {
+using Arterra.Data.Item;
+using Arterra.Data.Material;
+using Arterra.Configuration;
+
+namespace Arterra.Data.Intrinsic.Mortar {
     /// <summary>
     /// A structure defining how a material is converted in a mortar.
     /// This conversion can be used for input materials being smelted or output materials being produced.

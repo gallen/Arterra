@@ -3,13 +3,13 @@ using Unity.Mathematics;
 using System;
 using Newtonsoft.Json;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Entity;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Entity;
+using Arterra.Data.Item;
 using Arterra.Core.Storage;
 using Arterra.Core.Events;
 
 [CreateAssetMenu(menuName = "Generation/Entity/AquaticAnimal")]
-public class AquaticAnimal : Arterra.Configuration.Generation.Entity.Authoring
+public class AquaticAnimal : Arterra.Data.Entity.Authoring
 {
     [UISetting(Ignore = true)][JsonIgnore]
     public Option<Animal> _Entity;

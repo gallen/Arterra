@@ -5,7 +5,7 @@ using Unity.Burst;
 using static EntityJob;
 using Newtonsoft.Json;
 using static Arterra.Core.Storage.CPUMapManager;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 
 /*
 Future Note: Make this done on a job system

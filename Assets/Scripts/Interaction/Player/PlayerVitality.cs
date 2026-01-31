@@ -4,7 +4,7 @@ using UnityEngine;
 using Newtonsoft.Json;
 using Arterra.Configuration;
 using Arterra.Configuration.Gameplay.Player;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Arterra.Core.Events;
 
 namespace Arterra.Configuration.Gameplay.Player {

@@ -3,8 +3,8 @@ using UnityEngine;
 using Unity.Mathematics;
 using Arterra.Core.Storage;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Material;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Material;
+using Arterra.Data.Item;
 using Arterra.Configuration.Gameplay.Player;
 using Utils;
 
@@ -332,7 +332,7 @@ namespace Arterra.Core.Player{
             return true;
         }
 
-        private static void EntityInteract(Configuration.Generation.Entity.Entity target) {
+        private static void EntityInteract(Arterra.Data.Entity.Entity target) {
             if (!target.active) return;
             if (target is not IAttackable) return;
             IAttackable targEnt = target as IAttackable;

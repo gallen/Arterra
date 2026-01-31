@@ -6,11 +6,13 @@ using Utils;
 using System.Linq;
 using Arterra.Engine.Terrain;
 using Arterra.Core.Storage;
-using Arterra.Configuration.Generation.Material;
+using Arterra.Data.Material;
 using Arterra.Core.Player;
 using static Arterra.Core.Player.PlayerInteraction;
+using Material = Arterra.Data.Material;
+using Arterra.Configuration;
 
-namespace Arterra.Configuration.Generation.Item {
+namespace Arterra.Data.Item {
     [CreateAssetMenu(menuName = "Generation/Items/StructureItem")]
     public class PlaceableStructureItemAuthoring : PlaceableTemplate<PlaceableStructureItem> {}
     public class PlaceableStructureItem : IItem {
@@ -21,7 +23,7 @@ namespace Arterra.Configuration.Generation.Item {
         private PlaceableStructureItemAuthoring settings => ItemInfo.Retrieve(Index) as PlaceableStructureItemAuthoring;
         private InteractionHandler handler;
 
-        private static Gameplay.Player.Interaction interaction => Config.CURRENT.GamePlay.Player.value.Interaction;
+        private static Arterra.Configuration.Gameplay.Player.Interaction interaction => Config.CURRENT.GamePlay.Player.value.Interaction;
 
         [JsonIgnore]
         public int StackLimit => 0xFFFF;

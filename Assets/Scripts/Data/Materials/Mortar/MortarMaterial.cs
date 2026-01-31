@@ -3,11 +3,12 @@ using Arterra.Core.Storage;
 using Newtonsoft.Json;
 using Unity.Mathematics;
 using UnityEngine;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Item;
 using Utils;
-using Arterra.Configuration.Intrinsic.Mortar;
+using Arterra.Data.Intrinsic.Mortar;
+using Arterra.Configuration;
 
-namespace Arterra.Configuration.Generation.Material
+namespace Arterra.Data.Material
 {
     /// <summary> A mortar material which can crush items put into it to produced
     /// crushed variants. </summary>

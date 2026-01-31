@@ -1,7 +1,7 @@
 using UnityEngine;
 using UnityEngine.Pool;
 using static EntityManager;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Arterra.Configuration;
 using Unity.Mathematics;
 using UnityEngine.UI;

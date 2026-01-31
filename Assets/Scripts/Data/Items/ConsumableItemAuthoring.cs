@@ -3,8 +3,9 @@ using UnityEngine;
 using Newtonsoft.Json;
 using Unity.Mathematics;
 using Arterra.Core.Player;
+using Arterra.Configuration;
 
-namespace Arterra.Configuration.Generation.Item{
+namespace Arterra.Data.Item{
 [CreateAssetMenu(menuName = "Generation/Items/Consumable")] 
 public class ConsumableItemAuthoring : AuthoringTemplate<ConsumbaleItem> {
     public float ConsumptionRate;

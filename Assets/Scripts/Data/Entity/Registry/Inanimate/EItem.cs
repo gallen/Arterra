@@ -3,15 +3,15 @@ using Unity.Mathematics;
 using System;
 using Newtonsoft.Json;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Item;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Item;
+using Arterra.Data.Entity;
 using static Arterra.Engine.Terrain.Readback.IVertFormat;
 using Arterra.Engine.Terrain.Readback;
 using Arterra.Core.Storage;
 using Arterra.Core.Events;
 
 [CreateAssetMenu(menuName = "Generation/Entity/Item")]
-public class EItem : Arterra.Configuration.Generation.Entity.Authoring
+public class EItem : Arterra.Data.Entity.Authoring
 {
     public Option<EItemSetting> _Setting;
     

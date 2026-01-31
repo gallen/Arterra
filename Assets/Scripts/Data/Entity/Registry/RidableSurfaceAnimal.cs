@@ -3,8 +3,8 @@ using Unity.Mathematics;
 using System;
 using Newtonsoft.Json;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Entity;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Entity;
+using Arterra.Data.Item;
 using Arterra.Core.Storage;
 using Arterra.Core.Events;
 // Defining the contract between a rider and their mount
@@ -21,7 +21,7 @@ public interface IRidable {
 }
 
 [CreateAssetMenu(menuName = "Generation/Entity/RidableSurfaceAnimal")]
-public class RidableSurfaceAnimal : Arterra.Configuration.Generation.Entity.Authoring
+public class RidableSurfaceAnimal : Arterra.Data.Entity.Authoring
 {
     public Option<AnimalSetting> _Setting;
     [JsonIgnore]

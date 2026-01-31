@@ -12,7 +12,7 @@ using Unity.Collections.LowLevel.Unsafe;
 using System.Buffers;
 using System.Threading.Tasks;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Arterra.Engine.Terrain;
 
 /*

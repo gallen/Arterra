@@ -3,10 +3,12 @@ using UnityEngine;
 using System;
 using System.Collections.Generic;
 using Newtonsoft.Json;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Item;
 using Unity.Mathematics;
 using System.Runtime.InteropServices;
-namespace Arterra.Configuration.Intrinsic{
+using Arterra.Configuration;
+
+namespace Arterra.Data.Intrinsic{
 
     /// <summary> An authoring object for a crafting recipe allowing for it 
     /// to be created via Unity's Inspector. </summary>

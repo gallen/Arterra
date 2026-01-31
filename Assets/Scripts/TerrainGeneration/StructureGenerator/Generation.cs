@@ -1,6 +1,6 @@
 using UnityEngine;
 
-namespace Arterra.Configuration.Generation.Structure{
+namespace Arterra.Data.Structure{
 /// <summary>
 /// A collection of settings that describe how structures are generated. 
 /// Any terrain not generated through noise-based generation should be created 

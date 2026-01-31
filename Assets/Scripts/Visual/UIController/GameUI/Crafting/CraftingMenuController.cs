@@ -5,8 +5,8 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Item;
-using Arterra.Configuration.Intrinsic;
+using Arterra.Data.Item;
+using Arterra.Data.Intrinsic;
 using Arterra.Engine.Terrain;
 
 

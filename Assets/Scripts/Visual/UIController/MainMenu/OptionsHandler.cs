@@ -11,7 +11,7 @@ using Arterra.Core.Storage;
 using System.Collections;
 using static Arterra.Core.Storage.World;
 
-namespace Arterra.Configuration.Intrinsic {
+namespace Arterra.Data.Intrinsic {
     /// <summary> Settings controlling how the world appears in 
     /// the menu when selecting and viewing the world 
     /// before entering </summary>
@@ -184,7 +184,7 @@ public class OptionsHandler : MonoBehaviour
             active = true;
 
             Arterra.Configuration.Quality.Terrain rSettings = Config.CURRENT.Quality.Terrain;
-            Arterra.Configuration.Intrinsic.WorldApperance wSettings = Config.CURRENT.System.WorldApperance;
+            Arterra.Data.Intrinsic.WorldApperance wSettings = Config.CURRENT.System.WorldApperance;
             uint chunkSize = (uint)rSettings.mapChunkSize + 2;
 
             uint3 gridSize = (uint3)Mathf.CeilToInt(chunkSize * wSettings.GridScale);

@@ -4,7 +4,7 @@ using System;
 using Newtonsoft.Json;
 using static Arterra.Core.Storage.CPUMapManager;
 using Arterra.Core.Storage;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Arterra.Core.Player;
 
 /*

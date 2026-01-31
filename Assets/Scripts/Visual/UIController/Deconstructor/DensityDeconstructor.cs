@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEditor;
 using Utils;
 using System.Linq;
-using Arterra.Configuration.Generation.Structure;
+using Arterra.Data.Structure;
 using Arterra.Configuration;
 using Arterra.Core.Storage;
 using Arterra.Engine.Terrain;
@@ -320,16 +320,16 @@ public class DensityDeconstructor : MonoBehaviour
     }
 
     private void SelectWalkable(){
-        bool VerifyProfile(Arterra.Configuration.Generation.Entity.Authoring info, int3 BaseCoord) {
+        bool VerifyProfile(Arterra.Data.Entity.Authoring info, int3 BaseCoord) {
             bool allC = true; bool anyC = false; bool any0 = false;
             uint3 dC = new (0);
-            Arterra.Configuration.Generation.Entity.EntitySetting.ProfileInfo p = info.Setting.profile;
+            Arterra.Data.Entity.EntitySetting.ProfileInfo p = info.Setting.profile;
             int3 gridSize = (int3)Structure.settings.value.GridSize;
             for(dC.x = 0; dC.x < p.bounds.x; dC.x++){
                 for(dC.y = 0; dC.y < p.bounds.y; dC.y++){
                     for(dC.z = 0; dC.z < p.bounds.z; dC.z++){
                         uint index = dC.x * p.bounds.y * p.bounds.z + dC.y * p.bounds.z + dC.z;
-                        Arterra.Configuration.Generation.Entity.ProfileE profile = info.Profile.value[(int)index];
+                        Arterra.Data.Entity.ProfileE profile = info.Profile.value[(int)index];
                         if (math.any(BaseCoord + (int3)dC >= gridSize)) return false;
                         int3 rCoord = BaseCoord + (int3)dC;
                         int rIndex = rCoord.x * gridSize.y * gridSize.z + rCoord.y * gridSize.z + rCoord.z;

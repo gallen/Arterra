@@ -5,9 +5,10 @@ using System.Collections.Generic;
 using UnityEditor;
 using Arterra.Core.Storage;
 using Arterra.Configuration.Quality;
+using Arterra.Configuration;
 
 
-namespace Arterra.Configuration.Generation.Material
+namespace Arterra.Data.Material
 {
     /// <summary> All settings related to the apperance and interaction of 
     /// materials in the game world. Different materials are allowed

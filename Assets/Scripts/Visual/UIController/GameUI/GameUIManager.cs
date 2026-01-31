@@ -6,7 +6,7 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Item;
 using System.Collections;
 
 public static class GameUIManager {
@@ -40,7 +40,7 @@ public class ScrollingResultDisplay {
     private int index;
     private bool active = false;
     private static Catalogue<TextureContainer> texInfo => Config.CURRENT.Generation.Textures;
-    private static Catalogue<Arterra.Configuration.Generation.Item.Authoring> itemInfo => Config.CURRENT.Generation.Items;
+    private static Catalogue<Arterra.Data.Item.Authoring> itemInfo => Config.CURRENT.Generation.Items;
     public ScrollingResultDisplay(Transform parent, List<int> outputs) {
         this.outputs = outputs;
         this.image = parent.transform.GetChild(0).GetComponentInChildren<Image>();

@@ -6,7 +6,7 @@ using Arterra.Engine.Terrain.Readback;
 using static Arterra.Engine.Terrain.Readback.IVertFormat;
 using Arterra.Configuration;
 using System.Collections.Generic;
-using Arterra.Configuration.Generation.Material;
+using Arterra.Data.Material;
 using Utils;
 using Arterra.Core.Storage;
 

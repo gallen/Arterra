@@ -6,8 +6,8 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Entity;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Entity;
+using Arterra.Data.Item;
 using Arterra.Core.Events;
 
 public class ArmorInventory : IInventory {

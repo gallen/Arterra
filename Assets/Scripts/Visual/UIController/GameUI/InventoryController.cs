@@ -10,9 +10,9 @@ using Unity.Mathematics;
 using UnityEngine;
 using UnityEngine.UI;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Item;
 using Arterra.Core.Player;
-using Arterra.Configuration.Generation.Material;
+using Arterra.Data.Material;
 
 namespace Arterra.Configuration.Gameplay{
     /// <summary> Settings controlling the size and apperance of the inventory,
@@ -188,7 +188,7 @@ public static class InventoryController {
 
     public static void DropItem(IItem item, float3 location, Quaternion rotation = default) {
         if (item == null) return;
-        Arterra.Configuration.Generation.Entity.Entity Entity = new EItem.EItemEntity(item, rotation);
+        Arterra.Data.Entity.Entity Entity = new EItem.EItemEntity(item, rotation);
         uint eIndex = (uint)Config.CURRENT.Generation.Entities.RetrieveIndex("EntityItem");
         EntityManager.CreateEntity(math.round(location), eIndex, Entity);
     }

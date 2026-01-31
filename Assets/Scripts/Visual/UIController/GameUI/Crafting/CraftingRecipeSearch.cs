@@ -7,8 +7,8 @@ using static CraftingMenuController;
 using UnityEngine.EventSystems;
 using System.Collections.Generic;
 using Arterra.Configuration;
-using Arterra.Configuration.Intrinsic;
-using Arterra.Configuration.Generation.Item;
+using Arterra.Data.Intrinsic;
+using Arterra.Data.Item;
 using Arterra.Engine.Terrain;
 using System.Linq;
 

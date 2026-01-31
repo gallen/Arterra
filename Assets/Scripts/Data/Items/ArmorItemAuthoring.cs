@@ -2,9 +2,10 @@ using System;
 using Newtonsoft.Json;
 using Unity.Mathematics;
 using UnityEngine;
-using Arterra.Configuration.Generation.Material;
+using Arterra.Data.Material;
+using Arterra.Configuration;
 
-namespace Arterra.Configuration.Generation.Item
+namespace Arterra.Data.Item
 {
     [CreateAssetMenu(menuName = "Generation/Items/Armor")]
     public class ArmorItemAuthoring : AuthoringTemplate<ArmorItem> {

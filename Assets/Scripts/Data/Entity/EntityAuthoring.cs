@@ -4,9 +4,11 @@ using Unity.Mathematics;
 using Newtonsoft.Json;
 using UnityEditor;
 using System.Collections.Generic;
-using Arterra.Configuration.Generation.Structure;
+using Arterra.Data.Structure;
 using Arterra.Core.Events;
-namespace Arterra.Configuration.Generation.Entity{
+using Arterra.Configuration;
+
+namespace Arterra.Data.Entity{
 /// <summary>
 /// A generic contract that ensures that all entities contain a certain
 /// set of properties and methods necessary for the system to function.

@@ -28,7 +28,7 @@ public class AsyncMeshReadback
 
     private static uint numMeshes;
 
-    private static Configuration.Intrinsic.Readback settings;
+    private static Arterra.Data.Intrinsic.Readback settings;
     /// <summary> The <see cref="GeometryHandle">geometry handles</see> for all the unqiue materials that are used to render the chunk. Each
     /// chunk will have a unique handle for each material in <see cref="Intrinsic.Readback.indirectTerrainMats"/>
     /// regardless of whether any geometry in the chunk uses that material. </summary>

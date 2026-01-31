@@ -5,9 +5,10 @@ using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
 using static Arterra.Core.Player.PlayerInteraction;
 using Arterra.Core.Events;
+using Arterra.Configuration;
 
 
-namespace Arterra.Configuration.Generation.Item
+namespace Arterra.Data.Item
 {
     //This type inherits ToolItemAuthoring which inherits AuthoringTemplate<ToolItem>  which
     //inherits Authoring which inherits Category<Authoring>

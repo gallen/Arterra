@@ -3,7 +3,7 @@ using Unity.Mathematics;
 using System;
 using Arterra.Configuration;
 using System.Collections.Generic;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 
 namespace Arterra.Configuration.Gameplay.Player{
     /// <summary>

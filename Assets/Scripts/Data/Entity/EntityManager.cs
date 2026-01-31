@@ -12,7 +12,7 @@ using Arterra.Core.Storage;
 using System.Threading.Tasks;
 using System.Linq;
 using Arterra.Configuration;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
 using Arterra.Engine.Terrain.Readback;

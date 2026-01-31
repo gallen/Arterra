@@ -6,7 +6,7 @@ using Arterra.Engine.Terrain;
 using Arterra.Core.Player;
 using Arterra.Configuration;
 using Arterra.Core.Events;
-using Arterra.Configuration.Generation.Entity;
+using Arterra.Data.Entity;
 using Arterra.Core.Storage;
 
 public class PlayerActionEffects{
