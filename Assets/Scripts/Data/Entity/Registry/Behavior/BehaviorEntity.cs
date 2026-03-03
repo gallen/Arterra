@@ -47,6 +47,7 @@ namespace Arterra.Data.Entity.Behavior {
         MapInteraction = BehaviorTypes.Base + 1,
         Indicators = BehaviorTypes.Base + 3,
         Rideable = BehaviorTypes.Base + 4,
+        NameTag = BehaviorTypes.Base + 5,
 
         StateMachine = BehaviorTypes.Creature + 0,
         Attack = BehaviorTypes.Creature + 1,
@@ -98,6 +99,7 @@ namespace Arterra.Data.Entity.Behavior {
             { Behaviors.MapInteraction, () => new MapInteractBehavior() },
             { Behaviors.Indicators, () => new InidcatorsBehavior() },
             { Behaviors.Rideable, () => new RidableBehavior() },
+            { Behaviors.NameTag, () => new NameTagBehavior() },
 
             { Behaviors.StateMachine, () => new StateMachineManagerBehavior()},
             { Behaviors.Attack, () => new AttackBehavior()},
@@ -202,6 +204,7 @@ namespace Arterra.Data.Entity.Behavior {
                 typeof(RelationsBehaviorSettings),
                 typeof(MateRecognition),
                 typeof(RideableSettings),
+                typeof(NameTagSettings),
                 typeof(StateMachineManagerSettings),
                 typeof(ConsumeBehaviorSettings),
                 typeof(AttackTargetSettings),
