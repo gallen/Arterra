@@ -1,0 +1,106 @@
+#pragma kernel ClearSockets
+#pragma kernel ConnectGraph
+
+#include "Assets/Resources/Compute/Utility/Random.hlsl"
+#include "Assets/Resources/Compute/Utility/GetIndex.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/SocketConnector.hlsl"
+
+const static int numThreads = 128;
+
+struct anchor {
+    int3 pos;
+    int system;
+    int stctInd;
+};
+
+struct sysInfo {
+    float edgeFrequency;
+    uint2 structures;
+};
+
+
+StructuredBuffer<sysInfo> _SystemInfo;
+
+RWStructuredBuffer<int> counters;
+StructuredBuffer<int> anchorDict;
+StructuredBuffer<anchor> anchors;
+
+RWStructuredBuffer<uint3> anchorPaths;
+
+int cellSize;
+int connectRadius;
+
+uint cellsPerChunk;
+int oCellOffset;
+int3 oCCoord;
+
+uint bSTART_anchors;
+uint bSTART_dict;
+uint bSTART_paths;
+
+uint bCOUNT_dict;
+uint bCOUNT_paths;
+
+[numthreads(numThreads,1,1)]
+void ClearSockets (uint3 id : SV_DispatchThreadID){
+    if (id.x >= counters[bCOUNT_dict]) return;
+
+    int rtInd = anchorDict[id.x + bSTART_dict];
+    socketUsage[rtInd + bSTART_sockets] = 0u;
+}
+
+uint csum(uint3 v) { return dot(v, float3(1,1,1));}
+
+[numthreads(numThreads,1,1)]
+void ConnectGraph (uint3 id : SV_DispatchThreadID){
+    if (id.x >= counters[bCOUNT_dict]) return;
+    
+    int searchRad = ceil((float)connectRadius / cellSize);
+    int3 base = oCCoord * cellsPerChunk * cellSize + oCellOffset;
+    
+    int3 rtCoord;
+    int rtInd = anchorDict[id.x + bSTART_dict];
+
+    anchor self = anchors[rtInd + bSTART_anchors];
+    if (self.system == -1) return;
+    sysInfo system = _SystemInfo[self.system];
+
+    rtCoord.x = rtInd % cellsPerChunk;
+    rtCoord.y = (rtInd / cellsPerChunk) % cellsPerChunk;
+    rtCoord.z = (rtInd / (cellsPerChunk * cellsPerChunk)) % cellsPerChunk;
+
+    int3 offset;
+    for(offset.x = -searchRad; offset.x <= searchRad; offset.x++) {
+    for(offset.y = -searchRad; offset.y <= searchRad; offset.y++) {
+    for(offset.z = -searchRad; offset.z <= searchRad; offset.z++) {
+        if (all(offset == 0)) continue;
+        int3 coord = rtCoord + offset;
+        if (any(coord < 0) || any(coord >= numPointsPerAxis)) continue;
+
+        int index = indexFromCoord(coord);
+        anchor neighbor = anchors[index + bSTART_anchors];
+        if (neighbor.system != self.system) continue;
+
+        //To avoid duplicate edges, nodes only consider edges in the positive direction
+        int3 diff = neighbor.pos - self.pos;
+        if (csum(diff) < 0) continue;
+        if (csum(diff) == 0) {
+            //i.e. if the negative coord comes before the positive one
+            if (diff.x < 0 || diff.x == 0 && diff.y < 0)
+                continue;
+        }
+
+        int3 wCoordSelf = rtCoord * cellSize + base;
+        int3 wCoordNeighbor = coord * cellSize + base;
+        uint seed = Random(wCoordNeighbor) ^ Random(wCoordSelf);
+        if (RandomFloat(seed) > system.edgeFrequency) continue;
+        uint connection = TryGetSocketConnection(rtInd, index, diff);
+        if (connection == 0) continue;
+
+        int appendInd;
+        InterlockedAdd(counters[bCOUNT_paths], 1, appendInd);
+        anchorPaths[appendInd + bSTART_paths] = uint3(rtInd, index, connection);
+    }
+    }
+    }
+}

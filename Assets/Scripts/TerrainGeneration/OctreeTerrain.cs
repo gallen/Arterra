@@ -97,6 +97,8 @@ namespace Arterra.Engine.Terrain{
         public struct GenTask {
             /// <summary> The action that is executed when the task is processed.</summary>
             public Action task;
+            /// <summary>Whether or not the task can be performed. If null, it is assumed the task can be performed.</summary>
+            public Func<bool> CanProcess;
             /// <summary> 
             /// The priority of the task as defined in <see cref="Utils.priorities.planning"/>. 
             /// Used to identify the load and loading message of the task.
@@ -110,10 +112,11 @@ namespace Arterra.Engine.Terrain{
             /// <summary>
             /// Constructs a new GenTask with the given action, id, and chunk.
             /// </summary>
-            public GenTask(Action task, int id, IOctreeChunk chunk) {
+            public GenTask(Action task, int id, IOctreeChunk chunk, Func<bool> CanProcess = null) {
                 this.task = task;
                 this.id = id;
                 this.chunk = chunk;
+                this.CanProcess = CanProcess;
             }
         }
 
@@ -185,6 +188,7 @@ namespace Arterra.Engine.Terrain{
                 taskQueue.Enqueue(task);
             }
         }
+        
 
         private void ProcessCoroutines(Queue<System.Collections.IEnumerator> taskQueue) {
             int UpdateTaskCount = taskQueue.Count;
@@ -194,16 +198,25 @@ namespace Arterra.Engine.Terrain{
             }
         }
         private void StartGeneration() {
+            int count = RequestQueue.Count;
             int FrameGPULoad = 0;
-            while (FrameGPULoad < s.maxFrameLoad) {
+            for(int i = 0; i < count; i++) {
                 if (!RequestQueue.TryDequeue(out GenTask gen))
                     return;
                 if (gen.chunk != null && !gen.chunk.Active)
                     continue;
+                
+                if(gen.CanProcess != null && !gen.CanProcess()) { //If currently unable to process task
+                    RequestQueue.Enqueue(gen);
+                    continue;
+                } 
+
                 Profiler.BeginSample("Task Number: " + gen.id);
                 gen.task();
                 Profiler.EndSample();
+
                 FrameGPULoad += taskLoadTable[gen.id];
+                if (FrameGPULoad > s.maxFrameLoad) break;
             }
         }
 
@@ -227,6 +240,33 @@ namespace Arterra.Engine.Terrain{
             int3 ViewerPosition = (int3)((float3)viewer.position / s.lerpScale + s.mapChunkSize / 2);
             int3 intraOffset = ((ViewerPosition % s.mapChunkSize) + s.mapChunkSize) % s.mapChunkSize;
             ViewPosCS = (ViewerPosition - intraOffset) / s.mapChunkSize;
+        }
+
+        /// <summary>Gets the lowest/first state any chunk in the dependent region is blocked on.
+        /// This means for any given chunk in the processed region, the returned status for any
+        /// sub-state can never be greater than the sub-state of that chunk. </summary>
+        /// <param name="MinGCoord">The minimum coordinate in grid space of the dependent region</param>
+        /// <param name="MaxGCoord">The maximum coordinate in grid space of the dependent region</param>
+        /// <returns>The aggregate minimal status</returns>
+        public static TerrainChunk.Status GetRegionMinimalStatus(int3 MinGCoord, int3 MaxGCoord) {
+            TerrainChunk.Status status  = new () {
+                ReadSaveState = TerrainChunk.Status.State.Finished,
+                CreateMap = TerrainChunk.Status.State.Finished,
+                SetMap = TerrainChunk.Status.State.Finished,
+                ShrinkMap = TerrainChunk.Status.State.Finished,
+                UpdateMesh = TerrainChunk.Status.State.Finished,
+            };
+            int3 size = MaxGCoord - MinGCoord;
+            int3 center = MinGCoord + size/2;
+            Bounds region = new Bounds((float3)center, (float3)size);
+            octree.IterateChunksInRegion(region, c => {
+                status.ReadSaveState = (TerrainChunk.Status.State)math.min((int)c.status.ReadSaveState, (int)status.ReadSaveState);
+                status.CreateMap = (TerrainChunk.Status.State)math.min((int)c.status.CreateMap, (int)status.CreateMap);
+                status.SetMap = (TerrainChunk.Status.State)math.min((int)c.status.SetMap, (int)status.SetMap);
+                status.ShrinkMap = (TerrainChunk.Status.State)math.min((int)c.status.ShrinkMap, (int)status.ShrinkMap);
+                status.UpdateMesh = (TerrainChunk.Status.State)math.min((int)c.status.UpdateMesh, (int)status.UpdateMesh);
+            });
+            return status;
         }
 
         /// <summary>

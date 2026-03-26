@@ -48,3 +48,9 @@ uint SampleTerrain (float3 position)
     
     return mapInfo;
 }
+
+bool InBounds(uint data, uint bounds) { 
+    uint solid = (data >> 8) & 0xFF; //viscosity
+    uint liquid = (data & 0xFF) - solid; //density - viscosity
+    return liquid >= (bounds & 0xFF) && liquid <= ((bounds >> 8) & 0xFF) && solid >= ((bounds >> 16) & 0xFF) && solid <= ((bounds >> 24) & 0xFF); 
+}

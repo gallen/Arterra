@@ -2,6 +2,7 @@ using System;
 using Arterra.Editor;
 using Arterra.Configuration;
 using Arterra.GamePlay.UI;
+using UnityEngine;
 
 namespace Arterra.Data.Item {
     /// <summary> A template for creating an item. To create an inspector serializable object, the 
@@ -18,7 +19,7 @@ namespace Arterra.Data.Item {
     /// that describe the apperance of the item as well as its connection to the 
     /// <see cref="Config.GenerationSettings.Materials"> material registry </see>. 
     /// </summary>
-    public class Authoring : Category<Authoring> {
+    public class Authoring : Category<Authoring>, ISlot {
         /// <summary> The name of the entry within the <see cref="Config.GenerationSettings.Textures"> texture registry </see>
         /// of the texture that is displayed when the item is in a UI panel. It is also used to create an <see cref="EItem"> entity item</see> mesh
         /// if the item is dropped in the world. This must always be a valid entry. </summary>
@@ -33,6 +34,26 @@ namespace Arterra.Data.Item {
         /// <summary>An(optional) description of the item 
         /// used as helpful tooltips for the player. </summary>
         public string Description;
+
+        private GameObject display;
+        /// <summary>Attaches the <see cref="TextureName">default texture</see> to a display <see cref="ISlot"/> /summary>
+        /// <param name="pSlot">The parent slot</param>
+        /// <param name="itemIndex">The index of the item</param>
+        public void AttachDisplay(Transform pSlot, int itemIndex) {
+            Catalogue<TextureContainer> TextureAtlas = Config.CURRENT.Generation.Textures;
+            display = Indicators.StackableItems.Get();
+            display.transform.SetParent(pSlot, false);
+            display.transform.GetComponent<UnityEngine.UI.Image>().sprite = TextureAtlas.Retrieve(TextureName).self;
+            display.GetComponentInChildren<TMPro.TextMeshProUGUI>().text = this.Name;
+        }
+
+        /// <summary>Clears the display on a slot if it is attached.</summary>
+        /// <param name="pSlot">The parent slot</param>
+        public void ClearDisplay(Transform pSlot) {
+             if (display == null) return;
+            Indicators.StackableItems.Release(display);
+            display = null;
+        }
     }
 
     /// <summary>

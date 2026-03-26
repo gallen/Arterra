@@ -24,8 +24,8 @@ Shader "Unlit/EditTerrain"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile _ INDIRECT  //Try to use shader_feature--doesn't work with material instances, but less variants
+            #pragma multi_compile _ NO_EDITORLIGHTING
 
-            #include "Assets/Resources/Compute/MapData/WSLightSampler.hlsl"
             #include "Assets/Resources/Compute/Utility/LambertShade.hlsl"
 
             struct matTerrain{
@@ -119,14 +119,10 @@ Shader "Unlit/EditTerrain"
                 float shadow = (1.0 - (light >> 30 & 0x3) / 3.0f);
                 float3 normalWS = normalize(IN.normalWS);
                 float3 albedo = triplanar(IN.positionWS, tInfo.baseTextureScale, blendAxes, tInfo.textureIndex);
-
-                float3 DynamicLight = LambertShade(albedo, normalWS, shadow);
-                float3 ObjectLight = float3(light & 0x3FF, (light >> 10) & 0x3FF, (light >> 20) & 0x3FF) / 1023.0f;
-                ObjectLight = mad((1 - ObjectLight), unity_AmbientGround.rgb, ObjectLight * 2.5f); //linear interpolation
-                ObjectLight *= albedo;
-
-                if (flags & 0x2) albedo = lerp(max(DynamicLight, ObjectLight).rgb, _RemoveColor.rgb, _RemoveColor.a);
-                else albedo = lerp(max(DynamicLight, ObjectLight).rgb, _AddColor.rgb, _AddColor.a);
+                albedo = LambertShade(albedo, IN.normalWS, IN.positionWS).rgb;
+                
+                if (flags & 0x2) albedo = lerp(albedo, _RemoveColor.rgb, _RemoveColor.a);
+                else albedo = lerp(albedo, _AddColor.rgb, _AddColor.a);
                 return float4(albedo, _Opacity);
             }
             ENDHLSL

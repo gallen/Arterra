@@ -9,6 +9,7 @@ using Arterra.Configuration;
 using TerrainCollider = Arterra.GamePlay.Interaction.TerrainCollider;
 using Arterra.Editor;
 using Newtonsoft.Json;
+using System.Runtime.Serialization;
 
 
 namespace Arterra.Data.Material
@@ -478,15 +479,23 @@ namespace Arterra.Data.Material
     public class MaterialInstance : IRegistered {
         /// <summary>The material authoring controlling generic logic of the material.
         /// This is logic that does not require metadata and is applied to all materials </summary>
-        public MaterialData Authoring;
-        /// <summary>The coordinate in grid space of this instance. </summary>
-        public int3 position;
-        private int index;
+        [JsonIgnore] public MaterialData Authoring;
+        [JsonProperty] private string name;
+        [JsonProperty] private int index;
         /// <summary> Obtains the material registry </summary>
         /// <returns>The material registry</returns>
         public IRegister GetRegistry() => Config.CURRENT.Generation.Materials.value.MaterialDictionary;
         /// <summary>The index within the material registry of this material.</summary>
-        public int Index { get => index; set => index = Index; }
+        [JsonIgnore] public int Index { get => index; set => index = Index; }
+        /// <summary>The coordinate in grid space of this instance. </summary>
+        public int3 position;
+
+        [OnDeserialized]
+        private void OnDeserialized(StreamingContext context) {
+            Catalogue<MaterialData> registry = (Catalogue<MaterialData>)GetRegistry();
+            index = registry.RetrieveIndex(name);
+            Authoring = registry.Retrieve(index);
+        }
 
         /// <summary>Default Json Constructor</summary>
         [JsonConstructor]
@@ -495,6 +504,7 @@ namespace Arterra.Data.Material
         /// <param name="GCoord">The position of the material</param>
         public MaterialInstance(int3 GCoord) {
             this.index = CPUMapManager.SampleMap(GCoord).material;
+            this.name = GetRegistry().RetrieveName(index);
             this.position = GCoord;
 
             this.Authoring = Config.CURRENT.Generation.Materials.value.MaterialDictionary.Retrieve(index);
@@ -504,6 +514,7 @@ namespace Arterra.Data.Material
         /// <param name="index">The index of the material type</param>
         public MaterialInstance(int3 GCoord, int index) {
             this.Authoring = Config.CURRENT.Generation.Materials.value.MaterialDictionary.Retrieve(index);
+            this.name = GetRegistry().RetrieveName(index);
             this.position = GCoord;
             this.index = index;
         }

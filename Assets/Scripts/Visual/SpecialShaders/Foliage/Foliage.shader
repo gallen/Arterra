@@ -24,6 +24,7 @@ Shader "Unlit/Foliage"
             // Register our functions
             #pragma vertex Vertex
             #pragma fragment Fragment
+            #pragma multi_compile _ NO_EDITORLIGHTING
 
             #include "Foliage.hlsl"
             ENDHLSL

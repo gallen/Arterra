@@ -72,6 +72,11 @@ public class Info
     [Header("Entities")]
     public Option<List<Option<EntityGen> > > Entities = new ();
 
+    /// <summary> A list containing all structure systems that will attempt to generate within the biome. 
+    /// Structure systems are collections of structures that form interconnected graphs, such as dungeons and labyrinths </summary>
+    [Header("StructureSystems")]
+    public Option<List<Option<BStructSystem> > > StructureSystems = new ();
+
     /// <summary> A getter property that deserializes all structures by recoupling them with the current world's configuration. This involves
     /// retrieving the real indices of the structures within the external <see cref="Config.GenerationSettings.Structures"/> registry. </summary>
     [JsonIgnore]
@@ -79,6 +84,16 @@ public class Info
         get{
             Catalogue<Structure.StructureData> reg = Config.CURRENT.Generation.Structures.value.StructureDictionary;
             return Structures.value.Select(x => Serialize(x.value, reg.RetrieveIndex(Names.value[x.value.Structure])));
+        }
+    }
+
+    /// <summary> A getter property that deserializes all structures by recoupling them with the current world's configuration. This involves
+    /// retrieving the real indices of the structures within the external <see cref="Config.GenerationSettings.Structures"/> registry. </summary>
+    [JsonIgnore]
+    public IEnumerable<BStructSystem> StructureSystemSerial{
+        get{
+            Catalogue<Structure.Jigsaw.JigsawSystem> reg = Config.CURRENT.Generation.Structures.value.SystemDictionary;
+            return StructureSystems.value.Select(x => Serialize(x.value, reg.RetrieveIndex(Names.value[x.value.StructureSystem])));
         }
     }
 
@@ -108,6 +123,11 @@ public class Info
 
     TerrainStructure Serialize(TerrainStructure x, int Index){
         x.Structure = Index;
+        return x;
+    }
+
+    BStructSystem Serialize(BStructSystem x, int Index){
+        x.StructureSystem = Index;
         return x;
     }
     EntityGen Serialize(EntityGen x, int Index){
@@ -165,6 +185,30 @@ public class Info
         /// bottom of the biome depending on whether it's a <see cref="SurfaceMaterials">surface</see> or <see cref="GroundMaterials">ground</see> material.
         /// If the biome is a <see cref="CBiomeInfo"/>, this value is ignored.
         /// </summary>
+        [Range(0, 1)]
+        public float height;
+    }
+
+    /// <summary> The settings for the generation pattern of a single structure system within a biome.  </summary>
+    [Serializable]
+    public struct BStructSystem {
+        /// <summary> The index of the name of the structure system within the <see cref="Names"/>.
+        /// Once recoupled, this will point to the real index within the external 
+        /// <see cref="Structure.Generation.SystemDictionary"/> registry. </summary>
+        [RegistryReference("StructureSystem", "/info/value/Names")]
+        public int StructureSystem;
+        /// <summary> Same as <see cref="BMaterial.genSize"/> </summary>
+        [Range(0, 1)]
+        [Tooltip("What type of generation to prefer, 0 = fine, 1 = coarse")]
+        public float genSize;
+        /// <summary> Same as <see cref="BMaterial.genShape"/> </summary>
+        [Range(0, 1)]
+        [Tooltip("What shape is the generation, 0, 1 = circles, 0.5 = lines")]
+        public float genShape;
+        /// <summary> Same as <see cref="BMaterial.frequency"/> </summary>
+        [Range(0, 1)]
+        public float frequency;
+       /// <summary> Same as <see cref="BMaterial.height"/> </summary>
         [Range(0, 1)]
         public float height;
     }

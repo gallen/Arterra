@@ -1,3 +1,5 @@
+#ifndef NINETYDEG_ROT_LUT
+#define NINETYDEG_ROT_LUT
 static const float3x3 RotationLookupTable[4][4][4] =
 {
     {
@@ -127,3 +129,4 @@ static const float3x3 RotationLookupTable[4][4][4] =
         }
     }
 };
+#endif

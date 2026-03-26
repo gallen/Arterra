@@ -32,6 +32,7 @@ namespace Arterra.Engine.Terrain {
         public int MaxDepth;
         /// <exclude />
         public int MinChunkSize;
+        private uint FreeNode;
 
         /// <summary>
         /// Creates an octree with the specified settings--depth, balance factor, and chunk radius.
@@ -42,7 +43,7 @@ namespace Arterra.Engine.Terrain {
         public Octree(int depth, int minChunkSize, int numChunks) {
             chunks = new ConstrainedLL<TChunk>((uint)numChunks * 2 + 1);
             nodes = new Node[4 * numChunks + 1];
-            nodes[0].child = 1; //free list
+            FreeNode = 1;
             MinChunkSize = minChunkSize;
             MaxDepth = depth;
         }
@@ -75,14 +76,14 @@ namespace Arterra.Engine.Terrain {
         protected virtual void Initialize(int numRtNodes = 1, int3 center = default) {
             int maxChunkSize = MinChunkSize * (1 << MaxDepth);
             Queue<uint> tree = new Queue<uint>();
-            Node root = new Node {
+            nodes[0] = new Node {
                 size = (uint)(maxChunkSize * numRtNodes),
                 origin = center - (maxChunkSize * numRtNodes/2),
                 child = 0
             };
-            root.ClearChunk();
 
-            AddOctreeChildren(ref root, 0, child => BuildTree(child), numRtNodes);
+            nodes[0].ClearChunk();
+            AddOctreeChildren(ref nodes[0], 0, child => BuildTree(child), numRtNodes);
         }
         
 
@@ -91,7 +92,7 @@ namespace Arterra.Engine.Terrain {
         public virtual void Release(){
             ForEachChunk(chunk => chunk.Destroy());
             Array.Clear(nodes, 0, nodes.Length);
-            nodes[0].child = 1;
+            FreeNode = 1;
             chunks.Release();
         }
 
@@ -372,9 +373,9 @@ namespace Arterra.Engine.Terrain {
         /// <param name="octree">The new node that is placed within the octree</param>
         /// <returns>The index within the octree that the node is inserted into</returns>
         public uint AddNode(Node octree) {
-            uint freeNode = nodes[0].child; //Free Head Node
+            uint freeNode = (uint)FreeNode; //Free Head Node
             uint nextNode = nodes[freeNode].child == 0 ? freeNode + 1 : nodes[freeNode].child;
-            nodes[0].child = nextNode;
+            FreeNode = nextNode;
 
             nodes[freeNode] = octree;
             return freeNode;
@@ -389,8 +390,48 @@ namespace Arterra.Engine.Terrain {
         /// responsibility to only call this on allocated nodes. 
         /// </param>
         public void RemoveNode(uint index) {
-            nodes[index].child = nodes[0].child;
-            nodes[0].child = index;
+            nodes[index].child = FreeNode;
+            FreeNode = index;
+        }
+
+        /// <summary>Iterates through all chunks in the octree within a given bounds.</summary>
+        /// <param name="bounds">The region being queried</param>
+        /// <param name="Iterate">A callback for any chunk intersecting the given region</param>
+        /// <param name="Active">Whether or not to process only active chunks. If false, the largest encountered chunk will be iterated instead </param>
+        public void IterateChunksInRegion(Bounds bounds, Action<TChunk> Iterate, bool Active = true) {
+            void IterateChunksHelper(uint nodeIndex) {
+                if (nodeIndex == 0) return;
+                ref Node node = ref nodes[nodeIndex];
+                // Compute the bounds of this node
+                var nodeOrigin = new Vector3(node.origin.x, node.origin.y, node.origin.z);
+                var nodeSize = new Vector3(node.size, node.size, node.size);
+                var nodeBounds = new Bounds(nodeOrigin + nodeSize * 0.5f, nodeSize);
+                if (!nodeBounds.Intersects(bounds)) return;
+                
+                if (node.HasChunk) {
+                    var chunk = chunks.nodes[node.Chunk].Value;
+                    if (Active && chunk.Active) {
+                        Iterate(chunk);
+                        return;
+                    } 
+                }
+
+                if (node.IsLeaf) return;
+                uint child = node.child;
+                if (child == 0) return;
+                uint sibling = child;
+                do {
+                    IterateChunksHelper(sibling);
+                    sibling = nodes[sibling].sibling;
+                } while (sibling != child);
+            }
+            
+            uint child = nodes[0].child;
+            uint sibling = child;
+            do {
+                IterateChunksHelper(sibling);
+                sibling = nodes[sibling].sibling;
+            } while (sibling != child);
         }
 
         /// <summary>

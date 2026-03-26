@@ -23,6 +23,7 @@ MonoBehaviour:
         - Water
         - SaturatedWater
         - Air
+        - Test
       GroundMaterials:
         value:
         - value:
@@ -57,6 +58,14 @@ MonoBehaviour:
         value: []
       Entities:
         value: []
+      StructureSystems:
+        value:
+        - value:
+            StructureSystem: 3
+            genSize: 0.368
+            genShape: 0.63
+            frequency: 1
+            height: 0
   BiomeConditions:
     value:
       CaveFreqStart: 0

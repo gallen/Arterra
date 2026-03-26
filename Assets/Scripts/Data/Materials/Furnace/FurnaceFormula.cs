@@ -95,7 +95,7 @@ namespace Arterra.Data.Intrinsic.Furnace {
         private ScrollingResultDisplay Display;
         /// <summary> Controls how recipes are created as UI slots. See <see cref="ISlot"/> for more information </summary>
         /// <param name="parent">The parent object containing the new slot</param>
-        public void AttachDisplay(Transform parent) {
+        public void AttachDisplay(Transform parent, int recipeIndex) {
             Display?.Release();
             Display = new ScrollingResultDisplay(parent, Outputs.value.Select(s => Index(s)).ToList());
         }

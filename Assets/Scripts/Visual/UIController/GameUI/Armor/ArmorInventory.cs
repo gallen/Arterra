@@ -169,7 +169,7 @@ namespace Arterra.GamePlay.UI {
         private void AttachDisplay(int index) {
             if (Info == null || index >= Info.Length) return;
             if (Display == null || index >= Display.Length) return;
-            Info[index]?.AttachDisplay(Display[index].ItemFrame);
+            Info[index]?.AttachDisplay(Display[index].ItemFrame, Info[index].Index);
         }
 
         private void ClearDisplay(int index) {

@@ -1,6 +1,5 @@
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/DeclareDepthTexture.hlsl"
-#include "Assets/Resources/Compute/MapData/WSLightSampler.hlsl"
 #include "Assets/Resources/Compute/Utility/LambertShade.hlsl"
 
 struct v2f
@@ -146,12 +145,5 @@ half4 frag (v2f IN) : SV_Target
     float waterDepth = max(linearDepth - dstToWater, 0);
     float4 waterCol = lerp(matData.WaterShallowCol, matData.WaterDeepCol, 1 - exp(-waterDepth * matData.WaterColFalloff));
 
-    uint light = SampleLight(IN.positionWS);
-    float shadow = 1.0 - (light >> 30 & 0x3) / 3.0f;
-    float3 DynamicLight = LambertShade(waterCol, IN.normalWS, shadow);
-    float3 ObjectLight = float3(light & 0x3FF, (light >> 10) & 0x3FF, (light >> 20) & 0x3FF) / 1023.0f;
-    ObjectLight = mad((1 - ObjectLight), unity_AmbientGround, ObjectLight * 2.5f); //linear interpolation
-    ObjectLight *= waterCol.rgb;
-
-	return float4((max(DynamicLight, ObjectLight)), waterCol.a);
+	return float4(LambertShade(waterCol.rgb, IN.normalWS, IN.positionWS).rgb, waterCol.a);
 }

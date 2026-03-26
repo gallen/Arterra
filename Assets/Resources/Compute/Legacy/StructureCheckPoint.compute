@@ -53,13 +53,13 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     uint checkEnd = _StructureIndexes[info.structureIndex+1].y;
 
     //Origin is always located at the least point, so there is one consistent direction of generation
-    float3 corner = mul(RotationLookupTable[info.rotation.x][info.rotation.y], float3(settings.sizeX, settings.sizeY, settings.sizeZ));
+    float3 corner = mul(RotationLookupTable[info.rotation.x][info.rotation.y][0], float3(settings.sizeX, settings.sizeY, settings.sizeZ));
     float3 newOrigin = float3(min(corner.x, 0), min(corner.y, 0), min(corner.z, 0)); //old origin at (0,0,0)
 
     for(uint i = checkStart; i < checkEnd; i++){
         checkData data = _StructureChecks[i];
 
-        float3 rotatedPos = mul(RotationLookupTable[info.rotation.x][info.rotation.y], data.position);
+        float3 rotatedPos = mul(RotationLookupTable[info.rotation.x][info.rotation.y][0], data.position);
         float3 transformedPos = rotatedPos - newOrigin;
 
         check newCheck;

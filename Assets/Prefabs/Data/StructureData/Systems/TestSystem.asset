@@ -1,0 +1,181 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2c1d7b5e0782942ebb97fdfad51d1210, type: 3}
+  m_Name: TestSystem
+  m_EditorClassIdentifier: Assembly-CSharp::Arterra.Data.Structure.Jigsaw.JigsawSystem
+  Name: Test
+  Tags:
+    Reg:
+      value: []
+  Names:
+    value:
+    - Connect1
+    - Connect2
+    - Connect3
+    - Connect4
+    - Connect5
+  Structures:
+    value:
+    - Structure: 0
+      Sockets:
+        value:
+        - Name: Lines
+          Connection: 2
+          UV:
+            x: 0.375
+            y: 0.375
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+    - Structure: 1
+      Sockets:
+        value:
+        - Name: Lines
+          Connection: 2
+          UV:
+            x: 0.375
+            y: 0.375
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 5
+          UV:
+            x: 0.375
+            y: 0.375
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+    - Structure: 2
+      Sockets:
+        value:
+        - Name: Lines
+          Connection: 0
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.7
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 1
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+    - Structure: 3
+      Sockets:
+        value:
+        - Name: Lines
+          Connection: 0
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 3
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 2
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+    - Structure: 4
+      Sockets:
+        value:
+        - Name: Lines
+          Connection: 3
+          UV:
+            x: 0.41666666
+            y: 0.4166667
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 5
+          UV:
+            x: 0.75
+            y: 0.4166667
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 1
+          UV:
+            x: 0.4166667
+            y: 0.25
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+        - Name: Lines
+          Connection: 4
+          UV:
+            x: 0.4166667
+            y: 0.4166667
+          Transitions:
+            value:
+            - TargetName: Lines
+              chance: 0.5
+  edgeFrequency: 1
+  references:
+    version: 2
+    RefIds: []

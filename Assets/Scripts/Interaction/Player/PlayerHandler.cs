@@ -6,6 +6,8 @@ using Arterra.Engine.Terrain;
 using Arterra.GamePlay.Interaction;
 using Arterra.Configuration;
 using Arterra.GamePlay.UI;
+using Unity.Mathematics;
+using Arterra.Core.Storage;
 
 
 namespace Arterra.Configuration.Gameplay.Player{
@@ -48,6 +50,13 @@ namespace Arterra.Configuration.Gameplay{
         public bool Intangiblity;
         /// <summary> Whether the player can keep their inventory on death </summary>
         public bool KeepInventory;
+        /// <summary> Whether or not the player can access the spectator camera </summary>
+        [UIModifiable(CallbackName = "Gamemode:Spectator")]
+        public bool SpectatorView;
+
+        /// <summary> Whether or not the player can access the infinite resource inventory </summary>
+        [UIModifiable(CallbackName = "Gamemode:ResourceInventory")]
+        public bool ResourceInventory;
     }
 }
 
@@ -77,29 +86,34 @@ namespace Arterra.GamePlay{
             active = false;
             data = LoadPlayerData();
             EntityManager.DeserializeE(data);
+            if (data.IsDead) {
+                data = PlayerStreamer.Player.Build();
+                EntityManager.DeserializeE(data); //make new entity if dead
+            }
 
             var prms = (data, data);
             RebindPlayer(ref prms);
 
-        OctreeTerrain.viewer = data.player.transform; //set octree's viewer to current player
-        PlayerCamera.Initialize();
-        PlayerMovement.Initialize();
-        PlayerInteraction.Initialize();
-        OctreeTerrain.MainLoopUpdateTasks.Enqueue(new IndirectUpdate(Update));
-        OctreeTerrain.MainFixedUpdateTasks.Enqueue(new IndirectUpdate(FixedUpdate));
-    }
+            OctreeTerrain.viewer = data.player.transform; //set octree's viewer to current player
+            PlayerCamera.Initialize();
+            PlayerMovement.Initialize();
+            PlayerInteraction.Initialize();
+            SpectatorController.Initialize();
+            OctreeTerrain.MainLoopUpdateTasks.Enqueue(new IndirectUpdate(Update));
+            OctreeTerrain.MainFixedUpdateTasks.Enqueue(new IndirectUpdate(FixedUpdate));
+        }
 
-    static bool RebindPlayer(ref (PlayerStreamer.Player old, PlayerStreamer.Player cur) cxt) {
-        Viewer.SetParent(cxt.cur.player.transform, worldPositionStays: false);
-        cxt.cur.eventCtrl.AddEventHandler(
-            GameEvent.Entity_Respawn,
-            delegate (object actor, object target, object ctx) {
-                var args = (ctx as RefTuple<(PlayerStreamer.Player, PlayerStreamer.Player)>).Value;
-                RebindPlayer(ref args);
-            }
-        );
-        return false;
-    }
+        static bool RebindPlayer(ref (PlayerStreamer.Player old, PlayerStreamer.Player cur) cxt) {
+            Viewer.SetParent(cxt.cur.player.transform, worldPositionStays: false);
+            cxt.cur.eventCtrl.AddEventHandler(
+                GameEvent.Entity_Respawn,
+                delegate (object actor, object target, object ctx) {
+                    var args = (ctx as RefTuple<(PlayerStreamer.Player, PlayerStreamer.Player)>).Value;
+                    RebindPlayer(ref args);
+                }
+            );
+            return false;
+        }
 
 
         private static void Update(MonoBehaviour mono) {
@@ -109,8 +123,7 @@ namespace Arterra.GamePlay{
             if (!active) return;
             data.camera.Update(Camera);
             PlayerMovement.Update();
-            Arterra.GamePlay.UI.PlayerStatDisplay.UpdateIndicator(data.vitality);
-
+            PlayerStatDisplay.UpdateIndicator(data.vitality);
         }
 
         private static void FixedUpdate(MonoBehaviour mono){

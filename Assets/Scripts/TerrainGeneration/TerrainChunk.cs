@@ -8,6 +8,7 @@ using Arterra.Engine.Terrain.Readback;
 using static Arterra.Engine.Terrain.Readback.IVertFormat;
 using Arterra.Core.Storage;
 using Arterra.Engine.Rendering;
+using System.Threading.Tasks;
 
 namespace Arterra.Engine.Terrain{
 
@@ -73,7 +74,7 @@ namespace Arterra.Engine.Terrain{
             /// <summary> Whether or not the chunk needs to update its map data. Do not set this directly, <see cref="CreateMap"/>, <see cref="ShrinkMap"/>, and <see cref="SetMap"/>
             /// automatically set this value when they are set. </summary>
             public State UpdateMap {
-                readonly get => (State)math.max((int)CreateMap, math.max((int)ShrinkMap, (int)SetMap));
+                readonly get => (State)math.min((int)CreateMap, math.min((int)ShrinkMap, (int)SetMap));
                 set {
                     CreateMap = value;
                     ShrinkMap = value;
@@ -81,11 +82,17 @@ namespace Arterra.Engine.Terrain{
                 }
             }
 
+            internal int _readSaveState;
             internal int _createMap;
             internal int _shrinkMap;
             internal int _setMap;
             internal int _updateMesh;
-            internal int _canUpdateMesh;
+
+            /// <summary> Whether or not the chunk has read its save state. </summary>
+            public State ReadSaveState {
+                readonly get => (State)_readSaveState;
+                set => _readSaveState = (int)value;
+            }
 
             /// <summary> Whether or not the chunk needs to regenerate the map data. This is true by default when creating a new chunk </summary>
             public State CreateMap {
@@ -115,28 +122,20 @@ namespace Arterra.Engine.Terrain{
                 readonly get => (State)_updateMesh;
                 set => _updateMesh = (int)value;
             }
-            /// <summary>
-            /// Whether or not the chunk can update its mesh data. Do not set this directly, <see cref="UpdateMesh"/> 
-            /// automatically sets this value when the chunk is actually able to update its mesh data. 
-            /// </summary>
-            public State CanUpdateMesh {
-                readonly get => (State)_canUpdateMesh;
-                set => _canUpdateMesh = (int)value;
-            }
 
             /// <summary> The enum describing the current 
             /// progress of any chunk update request.  </summary>
             public enum State {
-                /// <summary> Whether or not the requested update is finished.  </summary>
-                Finished = 0,
                 /// <summary> Whether or not the requested update is pending and 
                 /// waiting to be enqueued into the <see cref="RequestQueue">generation queue</see>
                 /// during the next update cycle. </summary>
-                Pending = 1,
+                Pending = 0,
                 /// <summary> Whether or not the requested update is enqueued
                 /// in the <see cref="RequestQueue">generation queue</see> and 
                 /// will be executed when it reaches the front of the queue</summary>
-                InProgress = 2,
+                InProgress = 1,
+                /// <summary> Whether or not the requested update is finished.  </summary>
+                Finished = 2,
             }
 
             /// <summary> Progresses the given state to <see cref="State.Pending"/> only if it is currently <see cref="State.Finished"/> </summary>
@@ -213,11 +212,11 @@ namespace Arterra.Engine.Terrain{
             meshRenderer.sharedMaterials = Config.CURRENT.System.ReadBack.value.TerrainMats.ToArray();
 
             status = new Status {
+                ReadSaveState = Status.State.Pending,
                 CreateMap = Status.State.Pending,
                 SetMap = Status.State.Finished,
                 ShrinkMap = Status.State.Finished,
                 UpdateMesh = Status.State.Pending,
-                CanUpdateMesh = Status.State.Finished,
             };
             if (depth <= Config.CURRENT.Quality.GeoShaders.value.MaxGeoShaderDepth)
                 GeoShaders = new SubChunkShaderGraph(this);
@@ -359,7 +358,7 @@ namespace Arterra.Engine.Terrain{
         /// <summary> The generation task which creates the map information for the chunk. This is the middle step in generating the chunk's information. 
         /// Chunks will also prune structures if they have cached structure information from <see cref="PlanStructures"/>. </summary>
         /// <param name="callback">The callback function that's called once ReadMapData has been completed (or inserted into a GPU cmd buffer)</param>
-        protected virtual void ReadMapData(Action callback = null) { }
+        protected virtual void CreateMapData(Action callback = null) { }
         /// <summary> The generation task which creates the mesh information for the chunk. This is the final step in generating the chunk's information. 
         /// Optionally chunks will place structures and generate geoshaded geometry if they have cached structure information from <see cref="ReadMapData"/> 
         /// and their depth is less than or equal to <see cref="Quality.GeoShaderSettings.MaxGeoShaderDepth"/> respectively.
@@ -372,6 +371,13 @@ namespace Arterra.Engine.Terrain{
             meshInfo.Release();
         }
 
+        /// <summary> Whether or not <see cref="CreateMesh"/> can be called safely for this chunk.</summary>
+        /// <returns></returns>
+        protected bool CanCreateMesh() {
+            Status dependentStatus = GetRegionMinimalStatus(origin - mapChunkSize, origin + size + mapChunkSize);
+            return dependentStatus.CreateMap == Status.State.Finished;//
+        }
+
         /// <summary>
         /// A real chunk is a chunk of the lowest <see cref="depth"/>, therefore the smallest size (equal to <see cref="Quality.Terrain.mapChunkSize"/>). 
         /// They are the chunks closest to the viewer and the only chunk that is capable of lossless sampling so it is the only chunk that maintains a copy of its map information 
@@ -379,8 +385,10 @@ namespace Arterra.Engine.Terrain{
         /// environment, it is all that exists.
         /// </summary>
         public class RealChunk : TerrainChunk {
+            private Task<Chunk.ReadbackInfo> ReadSaveState;
             /// <summary> Creates a new real chunk with the the given origin and size. <seealso cref="TerrainChunk"/> </summary>
             public RealChunk(Transform parent, int3 origin, int size, uint octreeIndex) : base(parent, origin, size, octreeIndex) {
+                ReadSaveState = null;
             }
 
             /// <summary> Verifies whether the chunk's is still valid given that a chunk is not valid if it was previously bording a chunk of a 
@@ -394,15 +402,23 @@ namespace Arterra.Engine.Terrain{
             /// to reflect the flags. The status is updated accordingly after the tasks are enqueued/finished. </summary>
             public override void Update() {
                 base.Update();
-                if (status.CreateMap == Status.State.Pending) {
-                    status.UpdateMap = Status.State.InProgress;
+                if (status.ReadSaveState == Status.State.Pending) {
+                   status.ReadSaveState = Status.State.InProgress;
                     RequestQueue.Enqueue(new GenTask {
-                        task = () => ReadMapData(),
+                        task = () => ReadSavedState(),
+                        id = (int)priorities.propogation,
+                        chunk = this
+                    });
+                } if (status.CreateMap == Status.State.Pending) {
+                    status.CreateMap = Status.State.InProgress;
+                    RequestQueue.Enqueue(new GenTask {
+                        task = () => CreateMapData(),
+                        CanProcess = CanCreateMap,
                         id = (int)priorities.generation,
                         chunk = this
                     });
                 } else if (status.SetMap == Status.State.Pending) {
-                    status.UpdateMap = Status.State.InProgress;
+                    status.SetMap = Status.State.InProgress;
                     RequestQueue.Enqueue(new GenTask {
                         task = () => SetChunkData(),
                         id = (int)priorities.generation,
@@ -413,17 +429,8 @@ namespace Arterra.Engine.Terrain{
                 if (status.UpdateMesh == Status.State.Pending) {
                     status.UpdateMesh = Status.State.InProgress;
                     RequestQueue.Enqueue(new GenTask {
-                        task = () => {
-                            status.UpdateMesh = Status.Complete(status.UpdateMesh);
-                            status.CanUpdateMesh = Status.Initiate(status.CanUpdateMesh);
-                        }, id = (int)priorities.propogation,
-                        chunk = this
-                    });
-                }
-                if (status.CanUpdateMesh == Status.State.Pending) {
-                    status.CanUpdateMesh = Status.State.InProgress;
-                    RequestQueue.Enqueue(new GenTask {
                         task = () => CreateMesh(OnChunkCreated),
+                        CanProcess = CanCreateMesh,
                         id = (int)priorities.mesh,
                         chunk = this
                     });
@@ -437,12 +444,25 @@ namespace Arterra.Engine.Terrain{
                 Generator.StructCreator.PlanStructuresGPU(Generator.MetaReadback, CCoord, origin, mapChunkSize, IsoLevel);
                 callback?.Invoke();
             }
-            /// <summary>Beyond what is described in <see cref="TerrainChunk.ReadMapData"/>, real chunks also reads 
+
+            private void ReadSavedState() {
+                ReadSaveState = Task.Run(() => Chunk.ReadChunkInfo(CCoord));
+                status.ReadSaveState = Status.Complete(status.ReadSaveState);
+            }
+
+            private bool CanCreateMap() {
+                if (status.ReadSaveState != Status.State.Finished) return false;
+                return ReadSaveState.IsCompleted;
+            }
+            /// <summary>Beyond what is described in <see cref="TerrainChunk.CreateMapData"/>, real chunks also reads 
             /// chunk files from storage, create/deserialize entities, and copy map data to the CPU.
-            /// </summary> <param name="callback"><see cref="TerrainChunk.ReadMapData"/></param>
-            protected override void ReadMapData(Action callback = null) {
-                //This code will be called on a background thread
-                Chunk.ReadbackInfo info = Chunk.ReadChunkInfo(CCoord);
+            /// </summary> <param name="callback"><see cref="TerrainChunk.CreateMapData"/></param>
+            protected override void CreateMapData(Action callback = null) {
+                if (ReadSaveState == null) return;
+                Chunk.ReadbackInfo info = new();
+                if (!ReadSaveState.IsFaulted) info = ReadSaveState.Result;
+                //Consume this resource to stop extra memory usage
+                ReadSaveState.Dispose(); ReadSaveState = null; 
 
                 if (info.map != null) { //if the chunk has saved map data
                     Generator.MeshCreator.SetMapInfo(mapChunkSize, 0, info.map);
@@ -478,7 +498,7 @@ namespace Arterra.Engine.Terrain{
                 status.UpdateMap = Status.Complete(status.UpdateMap);
                 callback?.Invoke();
             }
-            
+
             /// <summary> 
             /// To create the mesh, the information is gathered by sampling the GPU-side dictionary provided by the <see cref="GPUMapManager"/>,
             /// this allows the chunk to obtain information about the map data of neighboring chunks which is necessary for generating the mesh boundaries.
@@ -496,7 +516,7 @@ namespace Arterra.Engine.Terrain{
 
                 if (depth <= Config.CURRENT.Quality.GeoShaders.value.MaxGeoShaderDepth)
                     GeoShaders.ComputeGeoShaderGeometry(Generator.MeshReadback.vertexHandle, Generator.MeshReadback.triHandles[(int)ReadbackMaterial.terrain]);
-                status.CanUpdateMesh = Status.Complete(status.CanUpdateMesh);
+                status.UpdateMesh = Status.Complete(status.UpdateMesh);
             }
 
             private void SetChunkData(Action callback = null) {
@@ -529,12 +549,14 @@ namespace Arterra.Engine.Terrain{
         /// Fake chunks hence only reflect a chunk's default map data while normal chunks are capable of displaying dirty map information loaded from storage.
         /// </summary>
         public class VisualChunk : TerrainChunk {
+            private Task<MapData[]> ReadSaveState;
             private int3 sOrigin;
             private int sChunkSize;
             private int mapHandle;
 
             /// <summary> Creates a new visual chunk with the the given origin and size. <seealso cref="TerrainChunk"/> </summary>
             public VisualChunk(Transform parent, int3 origin, int size, uint octreeIndex) : base(parent, origin, size, octreeIndex) {
+                ReadSaveState = null;
                 sOrigin = origin - mapSkipInc;
                 sChunkSize = mapChunkSize + 3;
                 mapHandle = -1;
@@ -544,12 +566,18 @@ namespace Arterra.Engine.Terrain{
             /// to reflect the flags. The status is updated accordingly after the tasks are enqueued/finished. </summary>
             public override void Update() {
                 base.Update();
-                if (status.CreateMap == Status.State.Pending) {
-                    //Readmap data starts a CPU background thread to read data and re-synchronizes by adding to the queue
-                    //Therefore we need to call it directly to maintain it's on the same call-cycle as the rest of generation
-                    status.UpdateMap = Status.State.InProgress;
+                if (status.ReadSaveState == Status.State.Pending) {
+                   status.ReadSaveState = Status.State.InProgress;
                     RequestQueue.Enqueue(new GenTask {
-                        task = () => ReadMapData(),
+                        task = () => ReadSavedState(),
+                        id = (int)priorities.propogation,
+                        chunk = this
+                    });
+                } if (status.CreateMap == Status.State.Pending) {
+                    status.CreateMap = Status.State.InProgress;
+                    RequestQueue.Enqueue(new GenTask {
+                        task = () => CreateMapData(),
+                        CanProcess = CanCreateMap,
                         id = (int)priorities.generation,
                         chunk = this
                     });
@@ -557,17 +585,8 @@ namespace Arterra.Engine.Terrain{
                 if (status.UpdateMesh == Status.State.Pending) {
                     status.UpdateMesh = Status.State.InProgress;
                     RequestQueue.Enqueue(new GenTask {
-                        task = () => {
-                            status.UpdateMesh = Status.Complete(status.UpdateMesh);
-                            status.CanUpdateMesh = Status.Initiate(status.CanUpdateMesh);
-                        }, id = (int)priorities.propogation,
-                        chunk = this
-                    });
-                }
-                if (status.CanUpdateMesh == Status.State.Pending) {
-                    status.CanUpdateMesh = Status.State.InProgress;
-                    RequestQueue.Enqueue(new GenTask {
-                        task = () => { CreateMesh(OnChunkCreated); },
+                        task = () => CreateMesh(OnChunkCreated),
+                        CanProcess = CanCreateMesh,
                         id = (int)priorities.mesh,
                         chunk = this
                     });
@@ -597,16 +616,28 @@ namespace Arterra.Engine.Terrain{
                     Generator.StructCreator.GenerateStrucutresGPU(mapChunkSize + 1, mapSkipInc, bufferOffsets.rawMapStart, IsoLevel, sChunkSize, 1);
                 Generator.MeshCreator.CompressMap(sChunkSize);
             }
+
+            private void ReadSavedState() {
+                if (GPUMapManager.IsChunkRegisterable(CCoord, depth)) 
+                    ReadSaveState = Task.Run(() => Chunk.ReadVisualChunkMap(CCoord, depth));
+                status.ReadSaveState = Status.Complete(status.ReadSaveState);
+            }
+
+            private bool CanCreateMap() {
+                if (status.ReadSaveState != Status.State.Finished) return false;
+                return ReadSaveState == null || ReadSaveState.IsCompleted;
+            }
+
             /// <summary>
             /// A chunk is a normal visual chunk if it can be registered in the <see cref="GPUMapManager"/>. Otherwise, it is a fake visual chunk.
             /// For a fake visual chunk, ReadMapData does nothing because it will be lost immediately after generation as it is not cached anywhere.
             /// For a normal visual chunk, ReadMapData generates the default map information and registeres it into the <see cref="GPUMapManager"/>, 
             /// then it reads any dirty maps from storage and replaces the default map information within the <see cref="GPUMapManager"/>'s dictionary
             /// with the dirty map information.
-            /// </summary> <param name="callback"><see cref="TerrainChunk.ReadMapData(Action)"/></param>
-            protected override void ReadMapData(Action callback = null) {
-
+            /// </summary> <param name="callback"><see cref="TerrainChunk.CreateMapData(Action)"/></param>
+            protected override void CreateMapData(Action callback = null) {
                 if (!GPUMapManager.IsChunkRegisterable(CCoord, depth)) {
+                    status.UpdateMap = Status.Complete(status.UpdateMap);
                     callback?.Invoke();
                     return;
                 }
@@ -617,7 +648,13 @@ namespace Arterra.Engine.Terrain{
                 mapHandle = GPUMapManager.RegisterChunkVisual(CCoord, depth, UtilityBuffers.GenerationBuffer, bufferOffsets.mapStart);
                 if (mapHandle == -1) return;
 
-                MapData[] info = Chunk.ReadVisualChunkMap(CCoord, depth);
+                MapData[] info;
+                if (ReadSaveState == null || ReadSaveState.IsFaulted)
+                    info = new MapData[mapChunkSize * mapChunkSize * mapChunkSize];
+                else info = ReadSaveState.Result;
+                //Consume this resource to stop extra memory usage
+                ReadSaveState.Dispose(); ReadSaveState = null; 
+
                 Generator.MeshCreator.SetMapInfo(mapChunkSize, 0, info);
                 GPUMapManager.TranscribeMultiMap(UtilityBuffers.TransferBuffer, CCoord, depth);
                 //Subscribe once more so the chunk can't be released while we hold its handle
@@ -652,7 +689,7 @@ namespace Arterra.Engine.Terrain{
 
                 if (depth <= Config.CURRENT.Quality.GeoShaders.value.MaxGeoShaderDepth)
                     GeoShaders.ComputeGeoShaderGeometry(Generator.MeshReadback.vertexHandle, Generator.MeshReadback.triHandles[(int)ReadbackMaterial.terrain]);
-                status.CanUpdateMesh = Status.Complete(status.CanUpdateMesh);
+                status.UpdateMesh = Status.Complete(status.UpdateMesh);
             }
         }
     }

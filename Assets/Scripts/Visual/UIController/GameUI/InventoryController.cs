@@ -494,7 +494,7 @@ namespace Arterra.GamePlay.UI {
             private void AttachDisplay(int index) {
                 if (Info == null || index >= Info.Length) return;
                 if (Display == null || index >= Display.Slots.Length) return;
-                Info[index]?.AttachDisplay(Display.Slots[index].transform);
+                Info[index]?.AttachDisplay(Display.Slots[index].transform, Info[index].Index);
             }
 
             private void ClearDisplay(int index) {
@@ -906,7 +906,7 @@ namespace Arterra.GamePlay.UI {
             private void ShowCursor() {
                 if (Display.Object == null) return;
                 if (Display.Object.activeSelf) return;
-                Item.AttachDisplay(Display.Object.transform);
+                Item.AttachDisplay(Display.Object.transform, Item.Index);
                 Display.Object.SetActive(true);
             }
 

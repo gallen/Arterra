@@ -227,6 +227,8 @@ namespace Arterra.Configuration {
             public Catalogue<Intrinsic.Mortar.MortarFormula> MortarFormulas;
             /// <summary> Controls how the player's armor is displayed. See <see cref="Gameplay.Armor"/> for more information. </summary>
             public Option<Intrinsic.Armor> Armor;
+            /// <summary> Controls how the optional infinite resource inventory is displayed. See <see cref="Gameplay.ResourceInventory"/> for more information.</summary>
+            public Option<Intrinsic.ResourceInventory> ResourceInventory;
             /// <summary> Controls how the terrain is updated. See <see cref="Intrinsic.TerrainUpdation"/> for more information. </summary>
             public Option<Intrinsic.TerrainUpdation> TerrainUpdation;
             /// <summary> Controls how the world looks in the main menu. See <see cref="Intrinsic.WorldApperance"/> for mor information. </summary>

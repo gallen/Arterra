@@ -68,7 +68,7 @@ namespace Arterra.Data.Item
         public void OnUnequipped(string armorName) {}
 
         protected GameObject display;
-        public virtual void AttachDisplay(Transform parent)
+        public virtual void AttachDisplay(Transform parent, int itemInd)
         {
             if (display != null)
             {

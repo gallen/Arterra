@@ -1,0 +1,114 @@
+#pragma kernel SamplePoints
+#pragma kernel PoissonPrune
+
+#include "Assets/Resources/Compute/Utility/Random.hlsl"
+#include "Assets/Resources/Compute/Utility/GetIndex.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/BiomeGenerator.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/BaseGeneration/MaterialSampler.hlsl"
+
+const static int numThreads = 8;
+
+uint cellSize;
+uint cellsPerChunk;
+int oCellOffset;
+int3 oCCoord;
+
+
+struct anchor {
+    int3 pos;
+    int system;
+    int stctInd;
+};
+
+struct PrefixCounters{
+    uint GroundEnd;
+    uint SurfaceEnd;
+    uint WaterEnd;
+    uint StructureStart;
+    uint EntityStart;
+    uint StructSystemStart;
+};
+
+StructuredBuffer<PrefixCounters> _BiomePrefCount;
+StructuredBuffer<BMaterial> _BiomeSystems;
+RWStructuredBuffer<anchor> anchors;
+uint coarseSSystemNoise;
+uint fineSSystemNoise;
+uint bSTART_anchors;
+
+[numthreads(numThreads,numThreads,numThreads)]
+void SamplePoints (uint3 id : SV_DispatchThreadID){
+    if (any(id >= numPointsPerAxis)) return;
+    int3 cellCoord = (oCCoord * cellsPerChunk + id) * cellSize + oCellOffset;
+    uint seed = Random(cellCoord);
+
+    float3 offset = Random3(seed);
+    int index = indexFromCoord(id) + bSTART_anchors;
+    int3 pos = (int3)((offset + id) * cellSize) + oCellOffset;
+    //Object space coordinate
+    anchors[index].pos = pos;
+    
+    //Determine system
+    
+    float weight;
+    int biome = SampleBiome(pos);
+    float heightFactor = SampleHeightFactor(pos);
+    int2 bounds = int2(_BiomePrefCount[biome].StructSystemStart, _BiomePrefCount[biome + 1].StructSystemStart);
+    float coarseNoise = GetNoise(pos, coarseSSystemNoise);
+    float fineNoise = GetNoise(pos, fineSSystemNoise);
+    int systemInd = GetMaterial(_BiomeSystems, bounds, coarseNoise, fineNoise, heightFactor, weight);
+
+    if (weight < 0.5f) anchors[index].system = -1;
+    else anchors[index].system = systemInd;
+}
+
+uint bSTART_dict;
+uint bCOUNT_dict;
+RWStructuredBuffer<int> anchorDict;
+RWStructuredBuffer<int> counters;
+
+[numthreads(numThreads,numThreads,numThreads)]
+void PoissonPrune(uint3 id : SV_DispatchThreadID) {
+    if (any(id >= numPointsPerAxis)) return;
+
+    int index = indexFromCoord(id) + bSTART_anchors;
+    if (anchors[index].system == -1) return;
+
+    int3 position = anchors[index].pos;
+    uint myPriority = Random(position);
+
+    bool alive = true;
+
+    [unroll]
+    for (int z = -1; z <= 1; z++) {
+    [unroll]
+    for (int y = -1; y <= 1; y++) {
+    [unroll]
+    for (int x = -1; x <= 1; x++) {
+        if (x == 0 && y == 0 && z == 0) continue;
+
+        int3 nid = int3(id) + int3(x, y, z);
+        if (any(nid < 0) || any(nid >= numPointsPerAxis)) continue;
+
+        int nIndex = indexFromCoord(nid) + bSTART_anchors;
+        int3 neighbor = anchors[nIndex].pos;
+        float d = length((float3)neighbor - (float3)position);
+
+        if (d < cellSize) {
+            uint neighborPriority = Random(neighbor);
+
+            if (neighborPriority > myPriority || (neighborPriority == myPriority && nIndex > index)) {
+                alive = false;
+            }
+        }
+    }}}
+
+    if (!alive) {
+        anchors[index].system = -1;
+        return;
+    }
+
+    int appendInd;
+    InterlockedAdd(counters[bCOUNT_dict], 1, appendInd);
+    anchorDict[bSTART_dict + appendInd] = index - bSTART_anchors;
+}

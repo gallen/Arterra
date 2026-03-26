@@ -26,7 +26,6 @@
 
 // Include some helper functions
 #include "Assets/Resources/Compute/GeoShader/VertexPacker.hlsl"
-#include "Assets/Resources/Compute/MapData/WSLightSampler.hlsl"
 #include "Assets/Resources/Compute/Utility/LambertShade.hlsl"
 
 struct DrawTriangle{
@@ -127,17 +126,9 @@ half3 Fragment(VertexOutput input) : SV_Target {
     clip(value-0.5f);
 
     // Lerp between the two grass colors based on layer height
-    float3 albedo = lerp(cxt.BaseColor, cxt.TopColor, height).rgb;
     float3 normal = NormalizeNormalPerPixel(input.normalWS);
-
-    uint light = SampleLight(input.positionWS);
-    float shadow = (1.0 - (light >> 30 & 0x3) / 3.0f);
-    float3 DynamicLight = LambertShade(albedo, normal, shadow);
-    float3 ObjectLight = float3(light & 0x3FF, (light >> 10) & 0x3FF, (light >> 20) & 0x3FF) / 1023.0f;
-    ObjectLight = mad((1 - ObjectLight), unity_AmbientEquator, ObjectLight * 2.5f); //linear interpolation
-    ObjectLight *= albedo;
-
-    return max(DynamicLight, ObjectLight).rgb;
+    float3 albedo = lerp(cxt.BaseColor, cxt.TopColor, height).rgb;
+    return LambertShade(albedo, normal, input.positionWS);
 }
 
 #endif

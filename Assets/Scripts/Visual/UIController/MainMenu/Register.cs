@@ -285,6 +285,7 @@ public struct Catalogue<T> : ICatalgoue, ICloneable where T : Category<T>
             settings.Generation.Biomes.value.SkyBiomes.Construct();
             settings.Generation.Biomes.value.SeaBiomes.Construct();
             settings.Generation.Structures.value.StructureDictionary.Construct();
+            settings.Generation.Structures.value.SystemDictionary.Construct();
             settings.Generation.Materials.value.MaterialDictionary.Construct();
             settings.Generation.Items.Construct();
             settings.System.Crafting.value.Recipes.Construct();
@@ -312,6 +313,7 @@ public struct Catalogue<T> : ICatalgoue, ICloneable where T : Category<T>
             Association.Add("SkyBiomes", settings.Generation.Biomes.value.SkyBiomes);
             Association.Add("SeaBiomes", settings.Generation.Biomes.value.SeaBiomes);
             Association.Add("Structures", settings.Generation.Structures.value.StructureDictionary);
+            Association.Add("StructureSystem", settings.Generation.Structures.value.SystemDictionary);
             Association.Add("Materials", settings.Generation.Materials.value.MaterialDictionary);
             Association.Add("Items", settings.Generation.Items);
             Association.Add("FurnaceRecipies", settings.System.FurnaceFormulas);

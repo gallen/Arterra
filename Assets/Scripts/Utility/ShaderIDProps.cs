@@ -18,6 +18,7 @@ namespace Arterra.Utils {
         public static readonly int BufferIndex = Shader.PropertyToID("buffIndex");
         public static readonly int BufferSize4Bytes = Shader.PropertyToID("_BufferSize4Bytes");
         // Count To Args
+        public static readonly int Stride = Shader.PropertyToID("stride");
         public static readonly int Count = Shader.PropertyToID("count");
         public static readonly int Args = Shader.PropertyToID("args");
         public static readonly int NumThreads = Shader.PropertyToID("numThreads");

@@ -19,6 +19,7 @@ Shader "Unlit/Terrain"
             #pragma vertex vert
             #pragma fragment frag
             #pragma multi_compile _ INDIRECT  //Try to use shader_feature--doesn't work with material instances, but less variants
+            #pragma multi_compile _ NO_EDITORLIGHTING
 
             #include "TerrainShader.hlsl"
             ENDHLSL

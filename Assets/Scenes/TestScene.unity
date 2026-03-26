@@ -413,12 +413,12 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsoLevel: 0.5
-  Structure: {fileID: 11400000, guid: 6dddc7078a14f4a3a8b0b6f7331b0bb1, type: 2}
+  Structure: {fileID: 11400000, guid: 32730c3ba16a3408d98700c87d63c9e1, type: 2}
   loadPath: /PalmTree2
   SDFoffset:
     x: 0
     y: 0
-    z: -2
+    z: 0
 --- !u!4 &1943111917
 Transform:
   m_ObjectHideFlags: 0

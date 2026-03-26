@@ -1,4 +1,6 @@
 #pragma kernel Bake
+#pragma multi_compile _ NO_EDITORLIGHTING
+
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Core.hlsl"
 #include "Packages/com.unity.render-pipelines.universal/ShaderLibrary/Lighting.hlsl"
 

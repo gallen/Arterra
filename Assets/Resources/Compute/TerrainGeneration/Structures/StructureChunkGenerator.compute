@@ -115,7 +115,7 @@ void CSMain (uint3 id : SV_DispatchThreadID)
         uint3 real = uint3(x, y, z) * skipInc;
         
         uint3 structCoord = structOrigin + xAxis * real.x + yAxis * real.y + zAxis * real.z;
-        structCoord = clamp(structCoord, 0, sizes);
+        structCoord = clamp(structCoord, 0, sizes-1);
         uint3 chunkCoord = chunkOriginLoD + uint3(x,y,z) + wOffset;
 
         //structCoord = min(structCoord, sizes - 1);

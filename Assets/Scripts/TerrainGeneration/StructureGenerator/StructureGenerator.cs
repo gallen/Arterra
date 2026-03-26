@@ -84,6 +84,16 @@ public class Creator
     public void PlanStructuresGPU(AsyncGenInfoReadback readback, int3 chunkCoord, float3 offset, int chunkSize, float IsoLevel, int depth=0)
     {
         ReleaseStructure();
+        //Sample system structures
+        Jigsaw.Generator.PlanStructureSystems(chunkSize, depth, chunkCoord);
+        /*CopyBufferRegion(
+            Jigsaw.Generator.offsets.finalStructsCounter,
+            Jigsaw.Generator.offsets.finalStructsStart,
+            Generator.offsets.structureCounter,
+            Generator.offsets.structureStart,
+            STRUCTURE_STRIDE_WORD
+        );
+        ClearRange(GenerationBuffer, 6, 1);*/
         ClearRange(GenerationBuffer, 7, 0);
         Generator.SampleStructureLoD(Config.CURRENT.Generation.Structures.value.maxLoD, chunkSize, depth, chunkCoord);
         Generator.IdentifyStructures(offset, IsoLevel);
@@ -196,8 +206,6 @@ public static class Generator
     /// <see cref="SystemProtocol.Startup"/> </summary>
     public static void PresetData()
     {
-        Data.Generation.Map mesh = Config.CURRENT.Generation.Terrain.value;
-        Data.Generation.Surface surface = Config.CURRENT.Generation.Surface.value;
         Arterra.Data.Structure.Generation structures = Config.CURRENT.Generation.Structures.value;
         Configuration.Quality.Terrain rSettings = Config.CURRENT.Quality.Terrain.value;
         int maxStructurePoints = calculateMaxStructurePoints(structures.maxLoD, rSettings.MaxStructureDepth, structures.StructureChecksPerChunk, structures.LoDFalloff);
@@ -211,27 +219,7 @@ public static class Generator
         StructureLoDSampler.SetInt("bSTART", offsets.sampleStart);
         StructureLoDSampler.SetInt("bCOUNTER", offsets.sampleCounter);
 
-        StructureIdentifier.SetInt("caveFreqSampler", mesh.CaveFrequencyIndex);
-        StructureIdentifier.SetInt("caveSizeSampler", mesh.CaveSizeIndex);
-        StructureIdentifier.SetInt("caveShapeSampler", mesh.CaveShapeIndex);
-        StructureIdentifier.SetInt("caveCoarseSampler", mesh.CoarseTerrainIndex);
-        StructureIdentifier.SetInt("caveFineSampler", mesh.FineTerrainIndex);
-
-        StructureIdentifier.SetInt("continentalSampler", surface.ContinentalIndex);
-        StructureIdentifier.SetInt("erosionSampler", surface.ErosionIndex);
-        StructureIdentifier.SetInt("majorWarpSampler", surface.MajorWarpIndex);
-        StructureIdentifier.SetInt("minorWarpSampler", surface.MinorWarpIndex);
-        StructureIdentifier.SetInt("squashSampler", surface.SquashIndex);
-        StructureIdentifier.SetInt("InfHeightSampler", surface.InfHeightIndex);
-        StructureIdentifier.SetInt("InfOffsetSampler", surface.InfOffsetIndex);
-        StructureIdentifier.SetInt("atmosphereSampler", surface.AtmosphereIndex);
-
-        StructureIdentifier.SetFloat("maxInfluenceHeight", surface.MaxInfluenceHeight);
-        StructureIdentifier.SetFloat("maxTerrainHeight", surface.MaxTerrainHeight);
-        StructureIdentifier.SetFloat("squashHeight", surface.MaxSquashHeight);
-        StructureIdentifier.SetFloat("heightOffset", surface.terrainOffset);
-        StructureIdentifier.SetFloat("heightSFalloff", mesh.heightFalloff);
-        StructureIdentifier.SetFloat("waterHeight", mesh.waterHeight);
+        SetStructIDSettings(StructureIdentifier);
 
         StructureIdentifier.SetBuffer(0, "structurePlan", UtilityBuffers.GenerationBuffer);
         StructureIdentifier.SetBuffer(0, "genStructures", UtilityBuffers.GenerationBuffer);
@@ -254,12 +242,42 @@ public static class Generator
         StructureIdentifier.SetInt("bCOUNT_prune", offsets.prunedCounter);
         StructureIdentifier.SetInt("bCOUNT_ehStct", offsets.ehStctCounter);
 
-        structureDataTranscriber.SetBuffer(0, "counter", UtilityBuffers.GenerationBuffer);
-        structureDataTranscriber.SetBuffer(0, "structPoints", UtilityBuffers.GenerationBuffer);
+        int kernel = structureDataTranscriber.FindKernel("Transcribe");
+        structureDataTranscriber.SetBuffer(kernel, "counter", UtilityBuffers.GenerationBuffer);
+        structureDataTranscriber.SetBuffer(kernel, "structPoints", UtilityBuffers.GenerationBuffer);
         structureDataTranscriber.SetInt("bSTART_struct", offsets.prunedStart);
         structureDataTranscriber.SetInt("bCOUNT_struct", offsets.prunedCounter);
         structureDataTranscriber.SetInt("bCOUNT_mStct", offsets.mStructCounter);
         structureDataTranscriber.SetInt("GPConfig", (int)GenPoint.GenType.StructureMeta);
+
+        Jigsaw.Generator.Initialize();
+    }
+
+    public static void SetStructIDSettings(ComputeShader cs) {
+        Data.Generation.Map mesh = Config.CURRENT.Generation.Terrain.value;
+        Data.Generation.Surface surface = Config.CURRENT.Generation.Surface.value;
+
+        cs.SetInt("caveFreqSampler", mesh.CaveFrequencyIndex);
+        cs.SetInt("caveSizeSampler", mesh.CaveSizeIndex);
+        cs.SetInt("caveShapeSampler", mesh.CaveShapeIndex);
+        cs.SetInt("caveCoarseSampler", mesh.CoarseTerrainIndex);
+        cs.SetInt("caveFineSampler", mesh.FineTerrainIndex);
+
+        cs.SetInt("continentalSampler", surface.ContinentalIndex);
+        cs.SetInt("erosionSampler", surface.ErosionIndex);
+        cs.SetInt("majorWarpSampler", surface.MajorWarpIndex);
+        cs.SetInt("minorWarpSampler", surface.MinorWarpIndex);
+        cs.SetInt("squashSampler", surface.SquashIndex);
+        cs.SetInt("InfHeightSampler", surface.InfHeightIndex);
+        cs.SetInt("InfOffsetSampler", surface.InfOffsetIndex);
+        cs.SetInt("atmosphereSampler", surface.AtmosphereIndex);
+
+        cs.SetFloat("maxInfluenceHeight", surface.MaxInfluenceHeight);
+        cs.SetFloat("maxTerrainHeight", surface.MaxTerrainHeight);
+        cs.SetFloat("squashHeight", surface.MaxSquashHeight);
+        cs.SetFloat("heightOffset", surface.terrainOffset);
+        cs.SetFloat("heightSFalloff", mesh.heightFalloff);
+        cs.SetFloat("waterHeight", mesh.waterHeight);
     }
     
     /// <summary> Samples the origins of all structures that intersect with the current chunk's boundaries. This is the <see href="https://blackmagic919.github.io/AboutMe/2024/06/08/Structure%20Planning/">
@@ -327,9 +345,10 @@ public static class Generator
         ComputeBuffer metaMemory = GenerationPreset.memoryHandle.GetBlockBuffer(metaAddress);
         ComputeBuffer args = UtilityBuffers.CountToArgs(structureDataTranscriber, UtilityBuffers.GenerationBuffer, offsets.structureCounter);
 
-        structureDataTranscriber.SetBuffer(0, ShaderIDProps.MemoryBuffer, structMemory);
-        structureDataTranscriber.SetBuffer(0, ShaderIDProps.MetaMemoryBuffer, metaMemory);
-        structureDataTranscriber.SetBuffer(0, ShaderIDProps.AddressDict, addresses);
+        int kernel = structureDataTranscriber.FindKernel("Transcribe");
+        structureDataTranscriber.SetBuffer(kernel, ShaderIDProps.MemoryBuffer, structMemory);
+        structureDataTranscriber.SetBuffer(kernel, ShaderIDProps.MetaMemoryBuffer, metaMemory);
+        structureDataTranscriber.SetBuffer(kernel, ShaderIDProps.AddressDict, addresses);
         structureDataTranscriber.SetInt(ShaderIDProps.AddressIndex, (int)addressIndex);
         structureDataTranscriber.SetInt(ShaderIDProps.MetaAddressIndex, metaAddress);
 
@@ -409,10 +428,10 @@ public static class Generator
     /// <remarks>The locations specified within this structure is relative to the size of the objects that will be occupying
     /// them and not based off a universal atomic unit. </remarks>
     public struct StructureOffsets : BufferOffsets{
-        /// <summary> The location storing the amount of raw structure origins generated by <see cref="SampleStructureLoD(int, int, int, int3)"/>. </summary>
-        public int sampleCounter;
         /// <summary> The location storing the amount of concrete structures after pruning non-intersecting structures, provided by <see cref="IdentifyStructures(Vector3, float)"/>. </summary>
         public int structureCounter;
+        /// <summary> The location storing the amount of raw structure origins generated by <see cref="SampleStructureLoD(int, int, int, int3)"/>. </summary>
+        public int sampleCounter;
         /// <summary> The location storing the total amount of checks of all structures within the chunk, used in <see cref="IdentifyStructures(Vector3, float)"/>.
         /// See <see cref="Configuration.Generation.Structure.StructureData.CheckPoint"/> for more info. </summary>
         public int checkCounter;
@@ -452,7 +471,7 @@ public static class Generator
         /// <see cref="BufferOffsets.bufferStart"/> for more info. </param>
         public StructureOffsets(int maxStructurePoints, int bufferStart){
             this.offsetStart = bufferStart;
-            sampleCounter = bufferStart; structureCounter = bufferStart + 1;
+            structureCounter = bufferStart; sampleCounter = bufferStart + 1; 
             checkCounter = bufferStart + 2; prunedCounter = bufferStart + 3;
             ehStctCounter = bufferStart + 4; mStructCounter = bufferStart + 5;
             tempCounter = bufferStart + 6;

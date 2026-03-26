@@ -3,7 +3,6 @@
 
 #include "Assets/Resources/Compute/Utility/LambertShade.hlsl"
 #include "Assets/Resources/Compute/GeoShader/VertexPacker.hlsl"
-#include "Assets/Resources/Compute/MapData/WSLightSampler.hlsl"
 
 struct DrawTriangle{
     uint3 vertex[3];
@@ -84,14 +83,7 @@ half3 Fragment(VertexOutput IN) : SV_TARGET{
     float3 normal = NormalizeNormalPerPixel(IN.normalWS);
     float3 albedo = cxt.LeafColor.rgb;
 
-    uint light = SampleLight(IN.positionWS);
-    float shadow = (1.0 - (light >> 30 & 0x3) / 3.0f);
-    float3 DynamicLight = LambertShade(albedo, normal, shadow);
-    float3 ObjectLight = float3(light & 0x3FF, (light >> 10) & 0x3FF, (light >> 20) & 0x3FF) / 1023.0f;
-    ObjectLight = mad((1 - ObjectLight), unity_AmbientEquator, ObjectLight * 2.5f); //linear interpolation
-    ObjectLight *= albedo;
-
-    return max(DynamicLight, ObjectLight).rgb;
+    return LambertShade(albedo, IN.normalWS, IN.positionWS);
 }
 
 #endif

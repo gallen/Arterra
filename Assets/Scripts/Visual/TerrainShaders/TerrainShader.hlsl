@@ -1,4 +1,3 @@
-#include "Assets/Resources/Compute/MapData/WSLightSampler.hlsl"
 #include "Assets/Resources/Compute/Utility/LambertShade.hlsl"
 
 struct matTerrain{
@@ -103,16 +102,8 @@ float3 frag (v2f IN) : SV_Target
     int material = IN.material;
     matTerrain tInfo =  _MatTerrainData[material];
 
-    uint light = SampleLight(IN.positionWS);
-    float shadow = (1.0 - (light >> 30 & 0x3) / 3.0f);
     float3 normalWS = normalize(IN.normalWS);
 	float3 albedo = triplanar(IN.positionWS, tInfo.baseTextureScale, blendAxes, tInfo.textureIndex);
 
-    float3 DynamicLight = LambertShade(albedo, normalWS, shadow);
-    float3 ObjectLight = float3(light & 0x3FF, (light >> 10) & 0x3FF, (light >> 20) & 0x3FF) / 1023.0f;
-    ObjectLight = mad((1 - ObjectLight), unity_AmbientGround, ObjectLight * 2.5f); //linear interpolation
-    ObjectLight *= albedo;
-
-
-	return max(DynamicLight, ObjectLight).rgb;
+	return LambertShade(albedo, normalWS, IN.positionWS);
 }

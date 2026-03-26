@@ -1,5 +1,6 @@
 using UnityEngine;
 using Arterra.Configuration;
+using Arterra.Data.Structure.Jigsaw;
 
 namespace Arterra.Data.Structure{
 /// <summary>
@@ -17,6 +18,12 @@ public class Generation : ScriptableObject
     /// See <see cref="StructureData"/> for more info.
     /// </summary>
     public Catalogue<StructureData> StructureDictionary;
+    /// <summary> A registry containing all structure systems that can be generated.
+    /// Jigsaw systems can be used to dynamic groups of structures for
+    /// labyrinths, villages, ruins or mazes. </summary>
+    public Catalogue<JigsawSystem> SystemDictionary;
+    /// <summary> Settings controlling how structure systems are generated./ </summary>
+    public Option<StructureSystem> StructureSystemSettings;
     /// <summary>
     /// The amount of structures that attempt to be placed per <see cref="Terrain.TerrainChunk.RealChunk"> Real Chunk </see>
     /// sampled. The higher this value, the more structures that will attempt to be placed per the same region of space resulting in 

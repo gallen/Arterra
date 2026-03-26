@@ -53,7 +53,6 @@ namespace Arterra.GamePlay.UI {
         }
 
         public void Release() { craftingBuffer.Release(); }
-
         public Sprite GetNavIcon() => Config.CURRENT.Generation.Textures.Retrieve(settings.DisplayIcon).self;
         public GameObject GetDispContent() => craftingMenu;
 

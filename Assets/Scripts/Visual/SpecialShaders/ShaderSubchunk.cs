@@ -95,15 +95,7 @@ namespace Arterra.Engine.Rendering
             }
         }
 
-        private bool IsParentUpdating()
-        {
-            TerrainChunk parent = graph.parent;
-            if (parent.status.UpdateMesh != TerrainChunk.Status.State.Finished)
-                return true;
-            if (parent.status.CanUpdateMesh != TerrainChunk.Status.State.Finished)
-                return true;
-            return false;
-        }
+        private bool IsParentUpdating() => graph.parent.status.UpdateMesh != TerrainChunk.Status.State.Finished;
 
         public void ReleaseGeometry()
         {

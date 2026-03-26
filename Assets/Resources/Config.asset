@@ -38,6 +38,7 @@ MonoBehaviour:
           value: {fileID: 11400000, guid: 280bf6dd8603344b6a47cfc48ac8b144, type: 2}
         Reg:
         - {fileID: 11400000, guid: 6853348a8533f47efb6d5a7ce5501b5d, type: 2}
+        - {fileID: 11400000, guid: 6f6bef56a25dc4d248c00a4d355f31d8, type: 2}
         - {fileID: 11400000, guid: b90a4c9cb53fb4ac8b490825185b13d2, type: 2}
         - {fileID: 11400000, guid: a12fc9754829b493ca27c7fc35222877, type: 2}
         - {fileID: 11400000, guid: 8d5a5aa28518f4afeb1cdcb066d25a94, type: 2}
@@ -127,6 +128,8 @@ MonoBehaviour:
           Invulnerability: 0
           Intangiblity: 0
           KeepInventory: 0
+          SpectatorView: 0
+          ResourceInventory: 0
       Inventory:
         value:
           PrimarySlotCount: 5
@@ -310,6 +313,8 @@ MonoBehaviour:
         - {fileID: 11400000, guid: 9de5c25f6d10c413ba55c8d8febfafa7, type: 2}
       Armor:
         value: {fileID: 11400000, guid: 360677af915224c978e39e88db696d39, type: 2}
+      ResourceInventory:
+        value: {fileID: 11400000, guid: d1e832f9621ff4330b35b136ffc49a88, type: 2}
       TerrainUpdation:
         value:
           RandomUpdatesPerChunk: 250
@@ -555,6 +560,8 @@ MonoBehaviour:
         - {fileID: 11400000, guid: 9a736bfb9c6994d91a502d2108e49505, type: 2}
         - {fileID: 11400000, guid: f2dbd2e4d689f436b9f190bf4975fed4, type: 2}
         - {fileID: 11400000, guid: ee6157fb60b554c04ae7335eb71730cc, type: 2}
+        - {fileID: 11400000, guid: 10ce51679490e46a5ac8234bc5b668c0, type: 2}
+        - {fileID: 11400000, guid: ccaaabc1c05ff4d76a7a071ab8423877, type: 2}
         - {fileID: 11400000, guid: 7721ca11966e940eeb33ac290f15191d, type: 2}
         - {fileID: 11400000, guid: d06188ce92ac248e694c7de2361c0a43, type: 2}
         - {fileID: 11400000, guid: fbefc0aaf31c5423588d6e239cd790ec, type: 2}
@@ -712,3 +719,4 @@ MonoBehaviour:
         - {fileID: 11400000, guid: b4aa92ea3f0914c64824c56e7598bd50, type: 2}
         - {fileID: 11400000, guid: a6f17d9a63cc64624a910e05a1373d4e, type: 2}
         - {fileID: 11400000, guid: d95a339e2ae3646938cb62b60af8ba1e, type: 2}
+        - {fileID: 11400000, guid: c70df99c70ff1424ea734b51ec847ea8, type: 2}

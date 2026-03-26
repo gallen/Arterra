@@ -60,8 +60,8 @@ namespace Arterra.Data.Item
             });
         }
 
-        public override void AttachDisplay(Transform parent) {
-            base.AttachDisplay(parent);
+        public override void AttachDisplay(Transform parent, int itemInd) {
+            base.AttachDisplay(parent, itemInd);
             if (display == null) return;
             UnityEngine.UI.Image shadow = display.transform.Find("Item").GetComponent<UnityEngine.UI.Image>();
             shadow.sprite = TextureAtlas.Retrieve(ItemInfo.Retrieve(Index).TextureName).self;

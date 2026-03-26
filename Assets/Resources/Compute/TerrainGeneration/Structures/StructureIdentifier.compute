@@ -47,6 +47,7 @@ struct PrefixCounters{
     uint WaterEnd;
     uint StructureStart;
     uint EntityStart;
+    uint StructSystemStart;
 };
 
 inline uint3 GetRot(uint meta) { return uint3((meta >> 2) & 0x3, meta & 0x3, (meta >> 4) & 0x3); }
@@ -198,12 +199,6 @@ void Identify (uint3 id : SV_DispatchThreadID)
     }
 }
 
-bool InBounds(uint data, uint bounds) { 
-    uint solid = (data >> 8) & 0xFF; //viscosity
-    uint liquid = (data & 0xFF) - solid; //density - viscosity
-    return liquid >= (bounds & 0xFF) && liquid <= ((bounds >> 8) & 0xFF) && solid >= ((bounds >> 16) & 0xFF) && solid <= ((bounds >> 24) & 0xFF); 
-}
-
 //Process structure checks
 [numthreads(numThreads,1,1)]
 void Check (uint3 id : SV_DispatchThreadID)
@@ -213,10 +208,10 @@ void Check (uint3 id : SV_DispatchThreadID)
     
     checkInfo check = structureChecks[id.x + bSTART_check];
     structureData structure = genStructures[check.structureIndex + bSTART_struct];
-    uint structureIndex = GetStructureIndex(structure.meta);
-    uint3 rot = GetRot(structure.meta); 
 
     if(structure.meta == asuint(-1)) return; //some other thread already invalidated this structure
+    uint structureIndex = GetStructureIndex(structure.meta);
+    uint3 rot = GetRot(structure.meta); 
     settings structureSettings = _StructureSettings[structureIndex];
 
     //Origin is always located at the least point, so there is one consistent direction of generation

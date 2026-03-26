@@ -420,12 +420,12 @@ MonoBehaviour:
         Variants:
           value:
           - TriggerAnim: AttackR
-            AttackChance: 0.07142858
+            AttackChance: 0.5
             AttackDuration: 0.25
             AttackDamage: 6
             Knockback: 10
           - TriggerAnim: AttackL
-            AttackChance: 1
+            AttackChance: 0.5
             AttackDuration: 0.25
             AttackDamage: 6
             Knockback: 10

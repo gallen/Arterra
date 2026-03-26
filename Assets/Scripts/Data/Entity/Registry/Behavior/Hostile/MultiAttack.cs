@@ -69,7 +69,7 @@ namespace Arterra.Data.Entity.Behavior {
             if (SelectedAttack < 0) return;
             RefTuple<(float dmg, float3 kb)> atk = cxt as RefTuple<(float dmg, float3 kb)>;
             atk.Value.dmg = settings.Variants.value[SelectedAttack].AttackDamage;
-            atk.Value.kb = settings.Variants.value[SelectedAttack].Knockback;
+            atk.Value.kb = math.normalizesafe(atk.Value.kb) * settings.Variants.value[SelectedAttack].Knockback;
             SelectedAttack = -1;
         }
 

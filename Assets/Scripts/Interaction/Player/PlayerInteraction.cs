@@ -134,6 +134,7 @@ namespace Arterra.GamePlay{
             };
 
             if (EntityManager.ESTree.FindClosestAlongRay(PlayerHandler.data.head, hitPt, PlayerHandler.data.info.rtEntityId, out var entity, out _)) {
+                Debug.Log(Config.CURRENT.Generation.Entities.RetrieveName((int)entity.info.entityType));
                 EntityInteract(entity, InventoryController.Selected);
                 InventoryController.TryClearSelected();
                 return;

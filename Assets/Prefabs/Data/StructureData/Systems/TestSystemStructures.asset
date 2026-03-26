@@ -1,0 +1,28 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 10515338075f646359ff9dcdea777aca, type: 3}
+  m_Name: TestSystemStructures
+  m_EditorClassIdentifier: Assembly-CSharp::Arterra.Data.Structure.StructureCategory
+  Name: TestSystem
+  Tags:
+    Reg:
+      value: []
+  Children:
+    value:
+    - value: {fileID: 11400000, guid: b5d3b5ed7563846e89ac5467aa741d7c, type: 2}
+    - value: {fileID: 11400000, guid: 160465e217ed94cc595e957e30600e6d, type: 2}
+    - value: {fileID: 11400000, guid: 43385c520a7b040a9b6194055b521a5a, type: 2}
+    - value: {fileID: 11400000, guid: beb3f8eb2e6ff4d32bfaee2b76da917a, type: 2}
+    - value: {fileID: 11400000, guid: 32730c3ba16a3408d98700c87d63c9e1, type: 2}
+  references:
+    version: 2
+    RefIds: []

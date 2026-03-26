@@ -66,7 +66,7 @@ namespace Arterra.Data.Item {
         public void UpdateEItem() { }
 
         private GameObject display;
-        public void AttachDisplay(Transform parent) {
+        public void AttachDisplay(Transform parent, int itemInd) {
             if (display != null) {
                 display.transform.SetParent(parent, false);
                 return;
@@ -134,12 +134,10 @@ namespace Arterra.Data.Item {
                 if (!cxt.TryGetHolder(out PlayerStreamer.Player player)) return;
                 if (!RayTestSolid(out float3 hitPt)) return;
                 
-                if (math.cmax(math.abs(Location - hitPt)) > 2 * interaction.TerraformRadius)
+                if (!IsLocked) Location = (int3)math.round(hitPt);
+                else if (math.cmax(math.abs(Location - hitPt)) >
+                    interaction.TerraformRadius + math.cmax(GetSize()))
                     IsLocked = false;
-                if (!IsLocked) {
-                    Location = (int3)math.round(hitPt);
-                    IsLocked = true;
-                }
 
                 display.ReflectMesh(DeserializeStruct(), Location, GetRotation(player.head - Location));
             }
@@ -180,6 +178,17 @@ namespace Arterra.Data.Item {
                         key.RetrieveKey((int)s.material));
                     return s;
                 }).ToList();
+            }
+
+            private int3 GetSize() {
+                MaterialData placeMat = MatInfo.Retrieve(item.settings.MaterialName);
+                if (placeMat is not PlaceableStructureMat key) return int3.zero;
+                int3 max = new (int.MinValue); int3 min = new (int.MaxValue);
+                foreach(var mat in key.Structure.value) {
+                    max = math.max(mat.Offset, max);
+                    min = math.min(mat.Offset, min);
+                }
+                return key.Structure.value.Count <= 0 ? int3.zero : max - min;
             }
             private delegate bool CheckIterate(Material.ConditionedGrowthMat.MapSamplePoint check, MapData sample, MapData delta, int3 GCoord);
             private bool RemoveConflictMats(Entity.Entity holder, List<ConditionedGrowthMat.MapSamplePoint> edit, int3 GCoord, int3 rot) {

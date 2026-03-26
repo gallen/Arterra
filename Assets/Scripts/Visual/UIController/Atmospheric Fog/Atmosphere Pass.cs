@@ -8,6 +8,7 @@ using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
 using Arterra.Configuration;
 using Arterra.Core.Storage;
+using Arterra.GamePlay;
 
 namespace Arterra.Engine.Rendering
 {
@@ -74,6 +75,8 @@ namespace Arterra.Engine.Rendering
         public override void Execute(ScriptableRenderContext context, ref RenderingData renderingData)
         {
             if (!initialized) return;
+            //if (renderingData.cameraData.camera == PlayerHandler.Camera.GetChild(0).GetComponent<UnityEngine.Camera>()) return;
+            if (renderingData.cameraData.camera != Camera.main) return;
             if (GPUMapManager.initialized && AtmosphereSettings.initialized)
             {
                 CommandBuffer cmd = CommandBufferPool.Get();

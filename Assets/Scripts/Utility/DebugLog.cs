@@ -14,7 +14,7 @@ namespace Arterra.Utils
             Debug = 5
         }
 
-        public static LogLevel CurrentLevel = LogLevel.Debug;
+        public static LogLevel CurrentLevel = LogLevel.Critical;//
 
         [System.Diagnostics.Conditional("UNITY_EDITOR")]
         public static void Log(string message, LogLevel level = LogLevel.Info)

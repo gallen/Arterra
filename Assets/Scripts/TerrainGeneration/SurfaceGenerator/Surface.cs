@@ -1,6 +1,7 @@
 using UnityEngine;
 using Newtonsoft.Json;
 using Arterra.Configuration;
+using Arterra.Editor;
 
 namespace Arterra.Data.Generation{
 /// <summary>
@@ -45,34 +46,38 @@ public class Surface : ScriptableObject{
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the continental noise
     /// map, or the coarse terrain height for large-scale features. </summary>
-    [UISetting(Message = "Surface Generation")]
+    [UISetting(Message = "Surface Generation")][RegistryReference("Noise")]
     public string ContinentalNoise;
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the erosion noise
     /// map which blends the amplitude of different octaves within the <see cref="ContinentalNoise"/> heightmap. More specifically,
     /// erosion controls the influence of PVNoise being added to the continental noise and does not scale ContentinalNoise in any way.
     /// </summary>
+    [RegistryReference("Noise")]
     public string ErosionNoise;
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the Major Domain Warp 
     /// noise map, or specifically the primary noise map which distorts the domain at which the terrain height noise maps are sampled. </summary>
+    [RegistryReference("Noise")]
     public string MajorWarpNoise;
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the Minor Domain Warp 
     /// noise map, or specifically the secondary noise map which distorts the domain at which the terrain height noise maps are sampled. </summary>
+    [RegistryReference("Noise")]
     public string MinorWarpNoise;
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the squash noise map.
     /// The squash noise map dictates, for each 2D surface coordinate, the distance below the surface where the density falloff
     /// begins. <seealso cref="MaxSquashHeight"/>.
     /// </summary>
+    [RegistryReference("Noise")]
     public string SquashNoise;
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the influence height noise map.
     /// The influence height noise map dictates, for each 2D surface coordinate, total length in grid space of the range around the surface
     /// where <see cref="Biome.SurfaceBiome">Surface Biomes</see> takes over biome-related generation.
     /// </summary>
-    [UISetting(Message = "Surface Control")]
+    [UISetting(Message = "Surface Control")][RegistryReference("Noise")]
     public string InfHeightNoise;
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the influence offset noise map.
@@ -80,12 +85,14 @@ public class Surface : ScriptableObject{
     /// completely above the surface, an offset of 1 places the range completely below the surface, and an offset of 0.5 places the range 
     /// such that it is bisected by the surface.
     /// </summary>
+    [RegistryReference("Noise")]
     public string InfOffsetNoise;
     /// <summary>
     /// The name of the noise sampler in the <see cref="Config.GenerationSettings.Noise">Noise</see> registry that generates the atmosphere noise map.
     /// The atmophere noise describes how fast the atmosphere falls off as the height above the surface increases. This is physically done
     /// by reducing the density of the map as the height approaches infinity. <seealso cref="Generation.Map.heightFalloff"/>.
     /// </summary>
+    [RegistryReference("Noise")]
     public string AtmosphereNoise;
     
     /// <summary> The index of the noise function described by <see cref="ContinentalNoise"/> in the <see cref="Config.GenerationSettings.Noise">noise</see> registry </summary>

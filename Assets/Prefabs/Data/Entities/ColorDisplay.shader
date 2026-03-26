@@ -17,8 +17,8 @@ Shader "Unlit/ColorDisplay"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
-
-            #include "Assets/Resources/Compute/MapData/WSLightSampler.hlsl"
+            #pragma multi_compile _ NO_EDITORLIGHTING
+            
             #include "Assets/Resources/Compute/Utility/LambertShade.hlsl"
 
             struct appdata
@@ -54,14 +54,7 @@ Shader "Unlit/ColorDisplay"
             {
                 float3 albedo = IN.color;
 
-                uint light = SampleLight(IN.positionWS);
-                float shadow = 1.0 - (light >> 30 & 0x3) / 3.0f;
-                float3 DynamicLight = LambertShade(albedo.rgb, IN.normalWS, shadow);
-                float3 ObjectLight = float3(light & 0x3FF, (light >> 10) & 0x3FF, (light >> 20) & 0x3FF) / 1023.0f;
-                ObjectLight = mad((1 - ObjectLight), unity_AmbientGround, ObjectLight * 2.5f); //linear interpolation
-                ObjectLight *= albedo.rgb;
-
-                return float4(max(DynamicLight, ObjectLight), 1);
+                return LambertShade(albedo, IN.normalWS, IN.positionWS);
             }
             ENDHLSL
         }

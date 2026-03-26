@@ -1,5 +1,5 @@
 // Each #kernel tells which function to compile; you can have many kernels
-#pragma kernel CSMain
+#pragma kernel Transcribe
 
 const static uint numThreads = 128;
 
@@ -33,7 +33,7 @@ inline uint GetStructureIndex(uint meta) { return meta >> 7; }
 
 
 [numthreads(numThreads,1,1)]
-void CSMain (uint3 id : SV_DispatchThreadID)
+void Transcribe (uint3 id : SV_DispatchThreadID)
 {
     if(_AddressDict[addressIndex].x == 0) //Invalid
         return;
@@ -57,4 +57,3 @@ void CSMain (uint3 id : SV_DispatchThreadID)
     genMeta.config = GPConfig | (rot.y << 8) | (rot.x << 16) | (rot.z << 24);
     _MetaMemoryBuffer[pointAddress] = genMeta;
 }
-

@@ -1,0 +1,259 @@
+#pragma kernel SelectAnchorPieces
+#pragma kernel GetRealEndpoints
+#pragma kernel FilterPathBatches
+
+#include "Assets/Resources/Compute/Utility/GetIndex.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/SolveAnchorRotation.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/TerrainAnalyzer.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathTypes.hlsl"
+const static int numThreads = 128;
+
+struct sysInfo {
+    float edgeFrequency;
+    uint2 structures;
+};
+
+uint bSTART_anchors;
+uint bSTART_dict;
+uint bCOUNT_dict;
+
+StructuredBuffer<uint2> _StructureIndexes;
+StructuredBuffer<checkData> _StructureChecks;
+StructuredBuffer<settings> _StructureSettings; //settings for structure
+
+StructuredBuffer<sysInfo> _SystemInfo;
+StructuredBuffer<SystemStructure> _SystemStructures;
+
+RWStructuredBuffer<int> counters;
+StructuredBuffer<int> anchorDict;
+RWStructuredBuffer<anchor> anchors;
+
+bool VerifyChecks(uint index, uint3 rot, float3 origin) {
+    settings structureSettings = _StructureSettings[index];
+    float3x3 rotMatrix = RotationLookupTable[rot.y][rot.x][rot.z];
+    float3 length = mul(rotMatrix, structureSettings.size);
+    float3 newOrigin = min(length, 0);
+
+    uint checkStart = _StructureIndexes[index].y;
+    uint checkEnd = _StructureIndexes[index+1].y;
+    for(uint checkInd = checkStart; checkInd < checkEnd; checkInd++){
+        checkData data = _StructureChecks[checkInd];
+        float3 rotatedPos = mul(rotMatrix, data.position);
+        float3 transformedPos = rotatedPos - newOrigin;
+
+        float3 checkPosition = transformedPos + origin;
+        if(!InBounds(SampleTerrain(checkPosition), data.bounds))
+            break;
+    }
+    return checkInd >= checkEnd;
+}
+
+
+[numthreads(numThreads,1,1)]
+void SelectAnchorPieces (uint3 id : SV_DispatchThreadID){
+    if (id.x >= counters[bCOUNT_dict]) return;
+    
+    int index = anchorDict[id.x + bSTART_dict];
+    anchor self = anchors[index + bSTART_anchors];
+    if (self.system == -1) return;
+
+    int stctInd; int rot;
+    uint2 range = _SystemInfo[self.system].structures;
+    for(stctInd = range.x; stctInd < range.y; stctInd++) {
+        SystemStructure stct = _SystemStructures[stctInd];
+        settings option = _StructureSettings[stct.structureIndex];
+        rot = SolveForRotation(index, option.config, stct.basePorts);
+        if (rot == -1) continue;
+        if(VerifyChecks(stct.structureIndex, GetRot(rot), self.pos))
+            break;
+    }
+
+    // Anchors are stored at bSTART_anchors in the shared generation buffer.
+    if (stctInd >= range.y) anchors[index + bSTART_anchors].stct = -1;
+    else anchors[index + bSTART_anchors].stct = ConcatStct(rot, stctInd);
+}
+
+
+uint bSTART_endpts;
+uint bSTART_paths;
+uint bCOUNT_paths;
+
+static const int3 NO_ENDS_COORD = int3(-32768, -32768, -32768);
+
+
+
+static const int3x3 FaceCoord[6] = {
+    {0, 0, 1, 1, 0, 0, 0, 1, 0}, //ZXY
+    {0, 0, 1, 1, 0, 0, 0, 1, 0}, //ZXY
+    {1, 0, 0, 0, 0, 1, 0, 1, 0}, //XZY
+    {1, 0, 0, 0, 0, 1, 0, 1, 0}, //XZY
+    {1, 0, 0, 0, 1, 0, 0, 0, 1}, //XYZ
+    {1, 0, 0, 0, 1, 0, 0, 0, 1} //XYZ
+};
+
+float Align(uint face) { return face < 3 ? 0 : 1; }
+
+
+StructuredBuffer<Port> _StructurePorts;
+RWStructuredBuffer<uint3> anchorPaths;
+RWStructuredBuffer<pathEnds> endPoints;
+
+
+bool IsNoEnds(pathEnds value) {
+    return all(value.start == NO_ENDS_COORD) && all(value.end == NO_ENDS_COORD);
+}
+
+bool IsPartialEnds(pathEnds value) {
+    return all(value.start == NO_ENDS_COORD) != all(value.end == NO_ENDS_COORD);
+}
+uint IsPartialStart(pathEnds value) { return all(value.start == NO_ENDS_COORD) ? 1 : 0; }
+int3 GetPartialEnd(pathEnds value) {
+    return IsPartialStart(value) ? value.start : value.end;
+}
+
+int3 GetPortOffset(anchor root, uint port) {
+    /*
+    Finds the specific position. of a port of an anchor piece,
+        - convert port to 3D vector direction 
+        - reverse direction based on struct rotation
+        - convert resultant 'base' vector back to face index
+        - Determine 'base' port position without rotation
+            - Lookup 2D offset based on face index
+            - multiply by FaceCoord which embeds the 2D vector
+            into the correct axises of the 3D vector.
+            - multiply with struct size to convert from UV(0-1) space
+            to object space
+        - Anchor(origin) is always lowest point of rotated struct, 
+            so rotate struct to determine transformed offset from lowest point 
+            and then add that transform to the actual anchor(origin).
+    */
+    uint2 s1 = UnpackStct(root.stct);
+    uint3 s1RInd = GetRot(s1.x);
+    SystemStructure stct = _SystemStructures[s1.y];
+    settings stSet = _StructureSettings[stct.structureIndex];
+    float3x3 s1Rot = RotationLookupTable[s1RInd.y][s1RInd.x][s1RInd.z];
+    float3x3 s1Inverse = transpose(s1Rot);
+    uint f1 = DirToFaceIdx(mul(s1Inverse, FaceIdxToDir(port)));
+
+    float3 basePortPos = mul(FaceCoord[f1], float3(_StructurePorts[s1.y].UV, Align(f1))) * stSet.size;
+
+    float3 length = mul(s1Rot, stSet.size);
+    float3 newOrigin = min(length, 0);
+    float3 rotatedPos = mul(s1Rot, basePortPos);
+    float3 transformedPos = rotatedPos - newOrigin;
+
+    return transformedPos + root.pos;
+}
+
+[numthreads(numThreads,1,1)]
+void GetRealEndpoints (uint3 id : SV_DispatchThreadID){
+    if (id.x >= counters[bCOUNT_paths]) return;
+    uint3 path = anchorPaths[id.x + bSTART_paths];
+    anchor start = anchors[path.x + bSTART_anchors];
+    anchor end = anchors[path.y + bSTART_anchors];
+    uint2 dirs = GetFaceDirs(path.z);
+
+    pathEnds endPt;
+    endPt.start = NO_ENDS_COORD;
+    endPt.end = NO_ENDS_COORD;
+    if (start.system != -1 && start.stct != -1) {
+        endPt.start = GetPortOffset(start, dirs.x);
+    } if (end.system != -1 && end.stct != -1) {
+        endPt.end = GetPortOffset(end, dirs.y);
+    }
+    
+    endPoints[id.x + bSTART_endpts] = endPt;
+}
+
+int connectRadius;
+int computeSize;
+int oCellOffset;
+
+uint bSTEP_batch;
+uint bSTART_olpCounts; //overlap counts
+uint bSTART_batchCounts;
+
+uint bSTART_overlap;
+uint bSTART_batch;
+
+RWStructuredBuffer<int> overlapLines;
+RWStructuredBuffer<int> batchLines;
+RWStructuredBuffer<uint3> SocketCaps; 
+uint bSTART_capCounts; 
+uint bSTART_caps; 
+
+/*
+Batchsize refers to the side length of a single batch.
+Each batch has an overlap of connectRadius with its neighbor.
+The aggregate of batches needs to cover a grid of side length computeSize
+
+The numPointsPerAxis used in indexToCoord describes the amount of batches
+per axis of computeSize, determined by 
+    ⌊(computeSize - batchSize) / (batchSize - connectRadius)⌋ + 1
+    (Derived from Convolution Equation)
+
+The straight line determined by the two endPts of an anchorPaths are of length 
+< connectRadius, meaning they fit entirely within some batch. Determine
+    1. all batches it overlaps and add to counters[bSTART_overlap + index] of that batch
+    2. the one batch it is contained in and add to counters[bSTART_batch + index] of that batch
+*/
+
+[numthreads(numThreads,1,1)]
+void FilterPathBatches (uint3 id : SV_DispatchThreadID){
+    if (id.x >= counters[bCOUNT_paths]) return;
+
+    pathEnds ep = endPoints[id.x + bSTART_endpts];
+    if (IsNoEnds(ep)) return;
+
+    int3 minPt = min(ep.start, ep.end);
+    int3 maxPt = max(ep.start, ep.end);
+    if (IsPartialEnds(ep)) {
+        minPt = GetPartialEnd(ep);
+        maxPt = GetPartialEnd(ep);
+    }
+    minPt -= oCellOffset;
+    maxPt -= oCellOffset;
+
+    // Batch b covers [b*stride, b*stride + batchSize - 1] (inclusive).
+    // Overlaps [minPt, maxPt] iff:  b*stride <= maxPt  AND  b*stride + batchSize - 1 >= minPt
+    // => bMin = ceil((minPt - batchSize + 1) / stride) = (minPt - batchSize + stride) / stride
+    // => bMax = floor(maxPt / stride)
+    int stride = batchSize - connectRadius;
+    int3 bMin = max((int3)0, (minPt - batchSize + stride) / stride);
+    int3 bMax = min(numPointsPerAxis - 1, maxPt / stride);
+
+    // Containing batch: floor(minPt / stride).
+    // Proof: b*stride <= minPt by definition, and since |line| < connectRadius = batchSize - stride,
+    //   maxPt < minPt + connectRadius <= b*stride + batchSize, so the whole line fits.
+    int3 bContained = clamp(minPt / stride, (int3)0, numPointsPerAxis - 1);
+    int containedFlat = indexFromCoord(bContained);
+    int containedSlot;
+
+    if (IsPartialEnds(ep)) {
+        uint3 path = anchorPaths[id.x + bSTART_paths];
+        uint2 dirs = GetFaceDirs(path.z);
+        int pInd = IsPartialStart(ep) ? path.x : path.y; 
+        int dir = IsPartialStart(ep) ? dirs.x : dirs.y;
+        uint2 stct = UnpackStct(anchors[pInd + bSTART_anchors].stct);
+
+        InterlockedAdd(counters[bSTART_capCounts + containedFlat], 1, containedSlot);
+        SocketCaps[bSTART_caps + containedFlat * bSTEP_batch + containedSlot] =
+            MakeSocketCap(stct.y, stct.x, GetPartialEnd(ep), dir, id.x);
+    } else {
+        InterlockedAdd(counters[bSTART_batchCounts + containedFlat], 1, containedSlot);
+        batchLines[bSTART_batch + containedFlat * bSTEP_batch + containedSlot] = (int)id.x;
+    }
+
+    int3 bRange = bMax - bMin + 1;
+    int totalOlp = bRange.x * bRange.y * bRange.z;
+    for (int oi = 0; oi < totalOlp; oi++) {
+        int bx = bMin.x + oi % bRange.x;
+        int by = bMin.y + (oi / bRange.x) % bRange.y;
+        int bz = bMin.z + oi / (bRange.x * bRange.y);
+
+        int olpSlot;
+        int olpFlat = indexFromCoord(uint3(bx, by,bz));
+        InterlockedAdd(counters[bSTART_olpCounts + olpFlat], 1, olpSlot);
+        overlapLines[bSTART_overlap + olpFlat * bSTEP_batch + olpSlot] = (int)id.x;
+    }
+}

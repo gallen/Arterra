@@ -22,8 +22,8 @@ Shader "Unlit/LiquidShader"
             #pragma vertex vert
             #pragma fragment frag
             #define _SPECULAR_COLOR
-            #pragma multi_compile _ _ADDITIONAL_LIGHTS
             #pragma multi_compile _ INDIRECT 
+            #pragma multi_compile _ NO_EDITORLIGHTING
             
             #include "LiquidShader.hlsl"
             ENDHLSL

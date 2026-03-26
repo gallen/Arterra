@@ -87,7 +87,23 @@ namespace Arterra.Utils {
             return count;
         }
 
-        public static bool CopyBuffer(ComputeBuffer source, ComputeBuffer dest, int readOffset = 0, int writeOffset = 0, int count = 0) {
+        /// <summary> Copies a region, delineated by a counter and buffer start from one part of the 
+        /// Generation buffer to another. </summary>
+        /// <param name="sourceCounter">The offset in 4byte words of the source counter</param>
+        /// <param name="sourceStart">The offset in stride units of the start of the source</param>
+        /// <param name="destCounter">The offset in 4byte words of the destination counter</param>
+        /// <param name="destStart">The offset in stride units of the start of the destination</param>
+        /// <param name="stride">The size of one counting unit in 4byte units</param>
+        public static void CopyBufferRegion(int sourceCounter, int sourceStart, int destCounter, int destStart, int stride = 1) {
+            sourceStart *= stride; destStart *= stride;
+
+            CopyBufferIndirect(GenerationBuffer, TransferBuffer, sourceStart, 1, sourceCounter, stride: stride);
+            CopyCount(GenerationBuffer, TransferBuffer, sourceCounter, 0);
+            CopyBufferIndirect(TransferBuffer, GenerationBuffer, 1, destStart, 0, stride: stride);
+            CopyCount(TransferBuffer, GenerationBuffer, 0, destCounter);
+        }
+
+        public static bool CopyBuffer(ComputeBuffer source, ComputeBuffer dest, int readOffset = 0, int writeOffset = 0, int count = 0, int stride = 1) {
             if (count <= 0) return false;
             if (source == null || dest == null) return false;
             if (source.count < readOffset + count) return false;
@@ -99,10 +115,28 @@ namespace Arterra.Utils {
             indirectCopy.SetBuffer(kernel, ShaderIDProps.Destination, dest);
             indirectCopy.SetInt(ShaderIDProps.WriteOffset, writeOffset);
             indirectCopy.SetInt(ShaderIDProps.Count, count);
+            indirectCopy.SetInt(ShaderIDProps.Stride, stride);
 
             indirectCopy.GetKernelThreadGroupSizes(kernel, out uint threadGroupSize, out _, out _);
-            int threadGroups = Mathf.CeilToInt(count / (float)threadGroupSize);
+            int threadGroups = Mathf.CeilToInt((count * stride) / (float)threadGroupSize);
             indirectCopy.Dispatch(kernel, threadGroups, 1, 1);
+            return true;
+        }
+
+        public static bool CopyBufferIndirect(ComputeBuffer source, ComputeBuffer dest, int readOffset = 0, int writeOffset = 0, int countOffset = 0, int stride = 1) {
+            if (countOffset <= 0) return false;
+            if (source == null || dest == null) return false;
+
+            int kernel = indirectCopy.FindKernel("CopyIndirect");
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.Source, source);
+            indirectCopy.SetInt(ShaderIDProps.ReadOffset, readOffset);
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.Destination, dest);
+            indirectCopy.SetInt(ShaderIDProps.WriteOffset, writeOffset);
+            indirectCopy.SetInt(ShaderIDProps.Count, countOffset);
+            indirectCopy.SetInt(ShaderIDProps.Stride, stride);
+
+            ComputeBuffer args = CountToArgs(indirectCopy, source, countOffset, kernel: kernel);
+            indirectCopy.DispatchIndirect(kernel, args);
             return true;
         }
 

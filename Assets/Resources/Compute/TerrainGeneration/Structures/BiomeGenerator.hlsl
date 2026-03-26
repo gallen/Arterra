@@ -55,3 +55,26 @@ int SampleBiome (float3 position)
     else
         return caveBiome;
 }
+
+float SampleHeightFactor(float3 position) {
+    float surfData[6];
+    surfData[1] = GetRawNoise2D(position.xz, erosionSampler);
+
+    float2 warpOffset = GetDomainWarpOffset2D(position.xz, majorWarpSampler, minorWarpSampler);
+    float erosionNoise = interpolateValue(surfData[1], erosionSampler);
+    surfData[0] = GetErodedNoise2D(position.xz, erosionNoise, warpOffset, continentalSampler);
+    surfData[3] = GetRawNoise2D(position.xz, InfHeightSampler);
+    surfData[4] = GetRawNoise2D(position.xz, InfOffsetSampler);
+    surfData[5] = GetRawNoise2D(position.xz, atmosphereSampler);
+
+    float InfHeight = interpolateValue(surfData[3], InfHeightSampler);
+    float InfOffset = interpolateValue(surfData[4], InfOffsetSampler);
+    float infMax = maxInfluenceHeight * (InfHeight * (1 - InfOffset));
+    float infMin = -maxInfluenceHeight * (InfHeight * InfOffset);
+    
+    float terrainHeight = surfData[0] * maxTerrainHeight + heightOffset;
+    float actualHeight = position.y + sOffset.y;
+    float groundHeight = actualHeight - terrainHeight;
+
+    return groundHeight > 0 ? groundHeight / infMax : groundHeight / infMin;
+}

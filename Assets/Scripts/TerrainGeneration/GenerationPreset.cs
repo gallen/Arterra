@@ -17,6 +17,10 @@ using Arterra.GamePlay.Interaction;
 using Arterra.Engine.Audio;
 using Arterra.GamePlay.UI;
 using Arterra.Engine.Rendering;
+using Unity.Mathematics;
+using Arterra.Data.Structure.Jigsaw;
+using Arterra.Engine.Terrain.Structure.Jigsaw;
+using System.Net.Sockets;
 
 namespace Arterra.Engine.Terrain{
 /// <summary>  The factory protocol for the collective game system. This
@@ -365,6 +369,7 @@ public static class GenerationPreset
         ComputeBuffer biomeMatBuffer;
         ComputeBuffer biomeEntityBuffer;
         ComputeBuffer structGenBuffer;
+        ComputeBuffer sSysGenBuffer;
 
         /// <summary>
         /// Initializes the <see cref="BiomeHandle"/>. Deserializes and copies all information
@@ -390,10 +395,11 @@ public static class GenerationPreset
             biomes.AddRange(sea.Select(e => e.info.value));
 
             int numBiomes = biomes.Count;
-            uint[,] biomePrefSum = new uint[numBiomes + 1, 5]; //Prefix sum
+            uint[,] biomePrefSum = new uint[numBiomes + 1, 6]; //Prefix sum
             List<Info.BMaterial> biomeMaterial = new();
             List<Info.TerrainStructure> biomeStructures = new();
             List<Info.EntityGen> biomeEntities = new();
+            List<Info.BStructSystem> biomeSSystems = new();
 
             for (int i = 0; i < numBiomes; i++)
             {
@@ -402,29 +408,35 @@ public static class GenerationPreset
                 biomePrefSum[i+1, 2] = (biomes[i].LiquidMaterials.value == null ? 0 : (uint)biomes[i].LiquidMaterials.value.Count) + biomePrefSum[i + 1, 1];
                 biomePrefSum[i+1, 3] = (biomes[i].Structures.value == null ? 0 : (uint)biomes[i].Structures.value.Count) + biomePrefSum[i, 3];
                 biomePrefSum[i+1, 4] = (biomes[i].Entities.value == null ? 0 : (uint)biomes[i].Entities.value?.Count) + biomePrefSum[i, 4];
+                biomePrefSum[i+1, 5] = (biomes[i].StructureSystems.value == null ? 0 : (uint)biomes[i].StructureSystems.value?.Count) + biomePrefSum[i, 5];
                 biomeMaterial.AddRange(biomes[i].MaterialSerial(biomes[i].GroundMaterials));
                 biomeMaterial.AddRange(biomes[i].MaterialSerial(biomes[i].SurfaceMaterials));
                 biomeMaterial.AddRange(biomes[i].MaterialSerial(biomes[i].LiquidMaterials));
                 if(biomes[i].Structures.value != null) biomeStructures.AddRange(biomes[i].StructureSerial);
                 if(biomes[i].Entities.value != null) biomeEntities.AddRange(biomes[i].EntitySerial);
+                if(biomes[i].StructureSystems.value != null) biomeSSystems.AddRange(biomes[i].StructureSystemSerial);
             }
 
             int matStride = sizeof(int) + sizeof(float) * 4;
             int structStride = sizeof(uint) + sizeof(float);
             int entityStride = sizeof(uint) + sizeof(float);
-            biomePrefCountBuffer = new ComputeBuffer(numBiomes + 1, sizeof(uint) * 5, ComputeBufferType.Structured);
+            int sSysStride = sizeof(int) + sizeof(float) * 4;
+            biomePrefCountBuffer = new ComputeBuffer(numBiomes + 1, sizeof(uint) * 6, ComputeBufferType.Structured);
             if(biomeMaterial.Count > 0) biomeMatBuffer = new ComputeBuffer(biomeMaterial.Count, matStride, ComputeBufferType.Structured);
             if(biomeStructures.Count > 0) structGenBuffer = new ComputeBuffer(biomeStructures.Count, structStride, ComputeBufferType.Structured);
             if(biomeEntities.Count > 0) biomeEntityBuffer = new ComputeBuffer(biomeEntities.Count, entityStride, ComputeBufferType.Structured);
+            if(biomeSSystems.Count > 0) sSysGenBuffer = new ComputeBuffer(biomeSSystems.Count, sSysStride, ComputeBufferType.Structured);
 
             biomePrefCountBuffer?.SetData(biomePrefSum);
             biomeMatBuffer?.SetData(biomeMaterial);
             biomeEntityBuffer?.SetData(biomeEntities);
             structGenBuffer?.SetData(biomeStructures);
+            sSysGenBuffer?.SetData(biomeSSystems);
 
             if(biomeMatBuffer != null) Shader.SetGlobalBuffer("_BiomeMaterials", biomeMatBuffer);
             if(structGenBuffer != null) Shader.SetGlobalBuffer("_BiomeStructureData", structGenBuffer);
             if(biomeEntityBuffer != null) Shader.SetGlobalBuffer("_BiomeEntities", biomeEntityBuffer);
+            if(sSysGenBuffer != null) Shader.SetGlobalBuffer("_BiomeSystems", sSysGenBuffer);
             Shader.SetGlobalBuffer("_BiomePrefCount", biomePrefCountBuffer);
 
             int offset = 1;
@@ -471,6 +483,7 @@ public static class GenerationPreset
             biomeEntityBuffer?.Release();
             biomeMatBuffer?.Release();
             structGenBuffer?.Release();//
+            sSysGenBuffer?.Release();
         }
     }
 
@@ -479,6 +492,7 @@ public static class GenerationPreset
     /// for use in the terrain generation process. <seealso cref="Config.GenerationSettings.Structures"/>.
     /// </summary>
     public struct StructHandle{
+        StructSystem systems;
         ComputeBuffer indexBuffer; //Prefix sum
         ComputeBuffer mapBuffer;
         ComputeBuffer checksBuffer;
@@ -526,7 +540,11 @@ public static class GenerationPreset
             Shader.SetGlobalBuffer("_StructureMap", mapBuffer);
             Shader.SetGlobalBuffer("_StructureChecks", checksBuffer);
             Shader.SetGlobalBuffer("_StructureSettings", settingsBuffer);
+            
+            systems = new StructSystem();
+            systems.Initialize();
         }
+        
 
         /// <summary>
         /// Releases all buffers used by the StructHandle.
@@ -538,6 +556,98 @@ public static class GenerationPreset
             mapBuffer?.Release();
             checksBuffer?.Release();
             settingsBuffer?.Release();
+            systems.Release();
+        }
+
+        public struct StructSystem {
+            ComputeBuffer StructureSystems;
+            ComputeBuffer SystemStructures;
+            ComputeBuffer StructurePorts;
+            ComputeBuffer StructureSockets;
+            ComputeBuffer SocketTransitions;
+            
+            public void Initialize() {
+                List<JigsawSystem> SystemDictionary = Config.CURRENT.Generation.Structures.value.SystemDictionary.Reg;
+
+                List<StructSystemInfo> systems = new ();
+                List<JigsawSystem.SystemStructure> structures = new ();
+                List<JigsawSystem.Port> ports = new ();
+                List<JigsawSystem.Socket> sockets = new ();
+                List<JigsawSystem.Transition> transitions = new ();
+                Dictionary<string, Dictionary<int, uint>> TransitionMap = new ();
+                Dictionary<string, uint2> TransitionRange = new ();
+
+                for(int i = 0; i < SystemDictionary.Count; i++) {
+                    JigsawSystem system = SystemDictionary[i];
+                    List<JigsawSystem.JigsawStructure> sysStructs = system.Structures.value;
+                    if (sysStructs == null || sysStructs.Count == 0) continue;
+                    uint2 systemStructRange; systemStructRange.x = (uint)structures.Count();
+
+                    TransitionMap.Clear();
+                    TransitionRange.Clear();
+                    for(int k = 0; k < sysStructs.Count; k++) {
+                        sysStructs[k].CollectSocketNames(k, ref TransitionMap);
+                    } foreach(KeyValuePair<string, Dictionary<int, uint>> SocketName in TransitionMap) {
+                        Dictionary<int, uint> Structures = SocketName.Value;
+                        TransitionRange.Add(SocketName.Key, new ((uint)transitions.Count(), (uint)(transitions.Count() + Structures.Count())));
+                        foreach(KeyValuePair<int, uint> stct in Structures) {
+                            transitions.Add(new JigsawSystem.Transition {
+                                Structure = stct.Key + (int)systemStructRange.x,
+                                AllowedOppositeFaces = stct.Value
+                            });
+                        }
+                    }
+                    
+                    for(int j = 0; j < sysStructs.Count; j++) {
+                        sysStructs[j].SerializeStructure(
+                            system, TransitionRange,
+                            out JigsawSystem.SystemStructure st,
+                            ref ports,
+                            ref sockets
+                        );
+                        structures.Add(st);
+                    }
+                    systemStructRange.y = (uint)structures.Count();
+                    systems.Add(new StructSystemInfo {
+                        edgeFrequency = system.edgeFrequency,
+                        structures = systemStructRange
+                    });
+                }
+
+                if (systems.Count == 0) return;
+                StructureSystems = new ComputeBuffer(SystemDictionary.Count, StructSystemInfo.size, ComputeBufferType.Structured); //By doubling stride, we compress the prefix sums
+                SystemStructures = new ComputeBuffer(structures.Count, JigsawSystem.SystemStructure.size, ComputeBufferType.Structured);
+                StructurePorts = new ComputeBuffer(ports.Count, JigsawSystem.Port.size, ComputeBufferType.Structured);
+                StructureSockets = new ComputeBuffer(sockets.Count, JigsawSystem.Socket.size, ComputeBufferType.Structured);
+                SocketTransitions = new ComputeBuffer(transitions.Count, JigsawSystem.Transition.size, ComputeBufferType.Structured);
+
+                StructureSystems.SetData(systems);
+                SystemStructures.SetData(structures);
+                StructurePorts.SetData(ports);
+                StructureSockets.SetData(sockets);
+                SocketTransitions.SetData(transitions);  
+
+                Shader.SetGlobalBuffer("_SystemInfo", StructureSystems);
+                Shader.SetGlobalBuffer("_SystemStructures", SystemStructures);
+                Shader.SetGlobalBuffer("_StructurePorts", StructurePorts);
+                Shader.SetGlobalBuffer("_StructureSockets", StructureSockets);
+                Shader.SetGlobalBuffer("_StructureTransitions", SocketTransitions); 
+            }
+
+            public struct StructSystemInfo {
+                public static int size => sizeof(float) + 2 * sizeof(uint);
+                public float edgeFrequency;
+                public uint2 structures;
+            };
+
+            public void Release()
+            {
+                StructureSystems?.Release();
+                SystemStructures?.Release();
+                StructurePorts?.Release();
+                StructureSockets?.Release();
+                SocketTransitions?.Release();
+            }
         }
     }
     

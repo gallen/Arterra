@@ -47,7 +47,7 @@ namespace Arterra.Data.Item{
         public readonly void UpdateEItem() { } 
 
         private GameObject display;
-        public void AttachDisplay(Transform parent){
+        public void AttachDisplay(Transform parent, int itemInd){
             if (display != null) {
                 display.transform.SetParent(parent, false);
                 return;

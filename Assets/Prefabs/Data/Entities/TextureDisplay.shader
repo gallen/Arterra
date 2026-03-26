@@ -17,8 +17,8 @@ Shader "Unlit/TextureDisplay"
             HLSLPROGRAM
             #pragma vertex vert
             #pragma fragment frag
+            #pragma multi_compile _ NO_EDITORLIGHTING
 
-            #include "Assets/Resources/Compute/MapData/WSLightSampler.hlsl"
             #include "Assets/Resources/Compute/Utility/LambertShade.hlsl"
             TEXTURE2D(_MainTexture); SAMPLER(sampler_MainTexture); 
 
@@ -54,16 +54,9 @@ Shader "Unlit/TextureDisplay"
             float4 frag (v2f IN) : SV_Target
             {
                 float2 uv = IN.uv;
-                float4 albedo = SAMPLE_TEXTURE2D(_MainTexture, sampler_MainTexture, uv);
+                float3 albedo = SAMPLE_TEXTURE2D(_MainTexture, sampler_MainTexture, uv).rgb;
 
-                uint light = SampleLight(IN.positionWS);
-                float shadow = 1.0 - (light >> 30 & 0x3) / 3.0f;
-                float3 DynamicLight = LambertShade(albedo.rgb, IN.normalWS, shadow);
-                float3 ObjectLight = float3(light & 0x3FF, (light >> 10) & 0x3FF, (light >> 20) & 0x3FF) / 1023.0f;
-                ObjectLight = mad((1 - ObjectLight), unity_AmbientGround, ObjectLight * 2.5f); //linear interpolation
-                ObjectLight *= albedo.rgb;
-
-                return float4(max(DynamicLight, ObjectLight), 1);
+                return LambertShade(albedo, IN.normalWS, IN.positionWS);
             }
             ENDHLSL
         }

@@ -10,7 +10,7 @@ StructuredBuffer<uint> _ChunkInfoBuffer;
 uint IsoLevel;
 #endif
 
-#ifdef USE_GAMELIGHTING
+#ifdef NO_EDITORLIGHTING
 uint chunkLMOffset; //Light Map
 
 uint2 GetChunkAddress(CInfo cHandle, int3 MCoord){

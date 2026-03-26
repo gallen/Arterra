@@ -9,6 +9,7 @@ using Arterra.Configuration;
 using Arterra.Data.Item;
 using System.Collections;
 using Arterra.GamePlay.UI;
+using Arterra.Data.Intrinsic;
 
 namespace Arterra.GamePlay.UI {
     public static class GameUIManager {
@@ -20,6 +21,7 @@ namespace Arterra.GamePlay.UI {
             ToolTips.TooltipSystem.Initialize();
             PanelNavbarManager.Initialize();
             InventoryController.Initialize();
+            ResourceInventoryController.Initialize();
 
             PauseHandler.Initialize();
             GameOverHandler.Initialize();
@@ -32,7 +34,7 @@ namespace Arterra.GamePlay.UI {
     /// handling of UI 'slots' </summary>
     public interface ISlot {
         /// <summary> Attaches the UI panel to be displayed representing the Item to the UI object. </summary>
-        public void AttachDisplay(Transform pSlot);
+        public void AttachDisplay(Transform pSlot, int index);
         /// <summary> This handle is called when the Display UI is to be cleared  </summary>
         public void ClearDisplay(Transform pSlot);
     }
@@ -156,7 +158,7 @@ namespace Arterra.GamePlay.UI {
             List<int> closestEntries = FindClosestEntries(input, PageIndex);
             for (int i = 0; i < closestEntries.Count; i++) {
                 SlotEntries[i] = registry.Retrieve(closestEntries[i]);
-                SlotEntries[i].AttachDisplay(GridContainer.Slots[i].transform);
+                SlotEntries[i].AttachDisplay(GridContainer.Slots[i].transform, closestEntries[i]);
             }
         }
 

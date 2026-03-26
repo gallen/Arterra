@@ -26,7 +26,7 @@ namespace Arterra.Data.Intrinsic{
 
         /// <summary> Controls how recipes are created as UI slots. See <see cref="ISlot"/> for more information </summary>
         /// <param name="parent">The parent object containing the new slot</param>
-        public void AttachDisplay(Transform parent) {
+        public void AttachDisplay(Transform parent, int recipeIndex) {
             UnityEngine.UI.Image image = parent.transform.GetChild(0).GetComponentInChildren<UnityEngine.UI.Image>();
 
             CraftingRecipe recipe = SerializeCopy();

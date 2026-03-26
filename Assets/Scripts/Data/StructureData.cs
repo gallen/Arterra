@@ -141,7 +141,6 @@ public class StructureData : Category<StructureData>
 
         /// <summary> Whether or not the structure has enhanced features. See <see cref="Enhancements"/> for more info. </summary>
         public bool IsEnhanced => (config & 0x8) != 0;
-        
     }
     /// <summary>
     /// The requirements that are tested against a map entry sampled by a <see cref="CheckPoint"/>. The

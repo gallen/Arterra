@@ -35,6 +35,7 @@ struct PrefixCounters{
     uint WaterEnd;
     uint StructureStart;
     uint EntityStart;
+    uint StructSystemStart;
 };
 
 StructuredBuffer<entityBound> _EntityInfo;

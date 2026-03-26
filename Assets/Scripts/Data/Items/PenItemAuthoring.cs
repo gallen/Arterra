@@ -67,7 +67,7 @@ namespace Arterra.Data.Item
         }
 
         private GameObject display;
-        public void AttachDisplay(Transform parent)
+        public void AttachDisplay(Transform parent, int itemInd)
         {
             if (display != null)
             {
@@ -296,8 +296,6 @@ namespace Arterra.Data.Item
             if (item == null) return;
             MapData orig = CPUMapManager.SampleMap(hitCoord);
             ToolTag prop = Config.CURRENT.GamePlay.Player.value.Interaction.value.DefaultTerraform.value;
-            if (MatInfo.GetMostSpecificTag(TagRegistry.Tags.BareHand, orig.material, out object tag))
-                prop = tag as ToolTag;
             if (!PlayerInteraction.HandleAddSolid(AddItem, hitCoord, prop.TerraformSpeed, out MapData change))
                 return;
             int delta = math.abs(change.SolidDensity - orig.SolidDensity);

@@ -1,6 +1,7 @@
 // Each #kernel tells which function to compile; you can have many kernels
 #pragma kernel CopyCount
 #pragma kernel CopyBuffer
+#pragma kernel CopyIndirect
 
 StructuredBuffer<uint> source;
 uint rOffset;
@@ -15,11 +16,23 @@ void CopyCount (uint3 id : SV_DispatchThreadID)
 }
 
 uint count;
+uint stride;
 
 [numthreads(256,1,1)]
 void CopyBuffer (uint3 id : SV_DispatchThreadID)
 {
-    if(id.x >= count)
+    if(id.x >= count * stride)
         return;
     destination[wOffset + id.x] = source[rOffset + id.x];
+}
+
+[numthreads(256,1,1)]
+void CopyIndirect (uint3 id : SV_DispatchThreadID)
+{
+    if(id.x >= source[count])
+        return;
+        
+    for (uint i = id.x * stride; i < (id.x + 1) * stride; i++) {
+        destination[wOffset + i] = source[rOffset + i];
+    }
 }

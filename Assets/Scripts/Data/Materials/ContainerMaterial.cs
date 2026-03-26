@@ -173,8 +173,7 @@ namespace Arterra.Data.Material
         }
         public class ContainerInventory : MaterialInstance, PanelNavbarManager.INavPanel {
             public InventoryController.Inventory inv;
-            [JsonIgnore]
-            private ContainerMaterial settings;
+            [JsonIgnore] private ContainerMaterial settings;
 
             [JsonConstructor]
             public ContainerInventory() {/*Do nothing: this is for newtonsoft deserializer*/}
