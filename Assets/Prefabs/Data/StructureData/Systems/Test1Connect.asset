@@ -23,11 +23,11 @@ MonoBehaviour:
         y: 5
         z: 5
       minimumLOD: 0
-      config: 1
+      config: 3
   Names:
     value:
     - Air
-    - Embers
+    - Bedrock
     - Steel
   map:
     value:
@@ -160,17 +160,7 @@ MonoBehaviour:
     value: []
   Enhancements:
     Entities:
-      value:
-      - Entity: Monolith
-        offsetMin:
-          x: 0
-          y: 2
-          z: 0
-        offsetMax:
-          x: 8
-          y: 6
-          z: 8
-        GenCount: 2
+      value: []
     MapMetaData:
       value: []
   references:

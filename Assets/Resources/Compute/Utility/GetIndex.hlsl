@@ -20,6 +20,12 @@ inline uint indexFromCoordManual(uint x, uint y, uint z, uint size) {
     return x * size * size + y * size + z;
 }
 
+inline int3 coordFromIndexManual(uint flat, uint size) {
+    int flatCoord = (int)flat;
+    int plane = (int)(size * size);
+    return int3(flatCoord / plane, (flatCoord / (int)size) % (int)size, flatCoord % (int)size);
+}
+
 //Regular
 inline uint indexFromCoord(uint3 pos) {
     return pos.x * numPointsPerAxis * numPointsPerAxis + pos.y * numPointsPerAxis + pos.z;
@@ -27,6 +33,10 @@ inline uint indexFromCoord(uint3 pos) {
 
 inline uint indexFromCoord(uint x, uint y, uint z) {
     return x * numPointsPerAxis * numPointsPerAxis + y * numPointsPerAxis + z;
+}
+
+inline int3 coordFromIndex(uint flat) {
+    return coordFromIndexManual(flat, numPointsPerAxis);
 }
 
 //2D

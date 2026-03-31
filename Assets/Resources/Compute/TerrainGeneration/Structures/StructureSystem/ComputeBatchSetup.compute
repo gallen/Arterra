@@ -5,23 +5,20 @@
 #include "Assets/Resources/Compute/Utility/GetIndex.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/TerrainAnalyzer.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathHelpers.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/AppendStructure.hlsl"
 
 const static int numThreads1 = 8;
 const static int numThreads2 = 16;
 const static int numThreads3 = 64;
 
-RWStructuredBuffer<int> counters;
 RWStructuredBuffer<PathNode> batchVisit;
 StructuredBuffer<pathEnds> endPoints;
 
 uint bSTEP_batch;
 uint bSTART_batch;
-uint bSTART_overlap;
-uint bSTART_olpCounts; //overlap counts
 uint bSTART_batchCounts;
 uint bSTART_endpts;
 uint bSTART_visited;
-StructuredBuffer<int> overlapLines;
 StructuredBuffer<int> batchLines;
 uint batchIndex;
 int3 batchOffset;
@@ -34,46 +31,17 @@ void SectionGrid(uint3 id : SV_DispatchThreadID)
 {
     if (any(id >= numPointsPerAxis))
         return;
-
-    float3 pos = (float3)(batchOffset + (int3)id);
-    int count = min(counters[bSTART_olpCounts + batchIndex], (int)bSTEP_batch);
-    int lineBase = (int)(bSTART_overlap + batchIndex * bSTEP_batch);
-    float bestDist = 1e30;
-    uint bestPath = INVALID_PATH;
-
-    for (uint i = 0; i < count; i++) {
-        int pathIdx = overlapLines[lineBase + i];
-        pathEnds ep = endPoints[pathIdx + bSTART_endpts];
-
-        float3 a = (float3)ep.start;
-        float3 b = (float3)ep.end;
-        float3 delta = b - a;
-        float lenSq = dot(delta, delta);
-        float t = (lenSq > 1e-10) ? saturate(dot(pos - a, delta) / lenSq) : 0.0;
-        t = clamp(t, 0, 1);
-
-        float dist = length(pos - (a + t * delta));
-        if (dist < bestDist) {
-            bestDist = dist;
-            bestPath = (uint)pathIdx;
-        }
-    }
-
     PathNode node;
-    node.id = bestPath;
+    node.id = -1;
     node.visited = INVALID_VISITED;
     batchVisit[indexFromCoord(id) + bSTART_visited] = node;
 }
 
 uint bSTART_capCounts; 
-uint bCOUNT_struct;
-
-uint bSTART_struct;
 uint bSTART_caps; 
 uint bSTART_paths;
 uint bSTART_anchors;
 RWStructuredBuffer<uint3> SocketCaps; //format: same as frontire node in PopulatePaths.compute (will be capped in another pass)
-RWStructuredBuffer<structureData> genStructures; //final output structures
 StructuredBuffer<uint3> anchorPaths;
 StructuredBuffer<anchor> anchors;
 
@@ -116,23 +84,22 @@ void BacktrackGridPath(uint3 id : SV_DispatchThreadID){
         int index = indexFromCoord(cur);
         PathNode visit = batchVisit[index + bSTART_visited];
 
-        if (visit.id != pathId) break;
         if (visit.visited == INVALID_VISITED) break;
+        if (visit.id > pathId) break;
 
         uint curFI;
         UnpackVisited(visit.visited, sysStructInd, rotMeta, nextFI, curFI);
         SystemStructure curSysStruct = _SystemStructures[sysStructInd];
 
         //Add Structure to generation queue
+        int3 originLocal = GetOriginFromSocket(cur, sysStructInd, rotMeta, curFI);
         structureData data;
-        data.structurePos = GetOriginFromSocket(cur, sysStructInd, rotMeta, curFI);
+        data.structurePos = originLocal + batchOffset;
         data.meta = PackStctMeta(curSysStruct.structureIndex, rotMeta);
-
-        InterlockedAdd(counters[bCOUNT_struct], 1, appendInd);
-        genStructures[bSTART_struct + appendInd] = data; //append struct
+        AppendStructure(data);
         
         // get origin offset
-        cur = data.structurePos;
+        cur = originLocal;
 
         //Find all unanswered sockets
         uint rotatedPorts = GetRotatedPortMask(curSysStruct.basePorts, rotMeta);
@@ -143,7 +110,7 @@ void BacktrackGridPath(uint3 id : SV_DispatchThreadID){
             if ((rotatedPorts & FaceBit(socketFace)) == 0u)
                 continue;
             
-            int3 socketPos = GetSocketObjectPosition(cur, sysStructInd, rotMeta, socketFace);
+            int3 socketPos = GetSocketObjectPosition(cur + batchOffset, sysStructInd, rotMeta, socketFace);
             InterlockedAdd(counters[bSTART_capCounts + batchIndex], 1, appendInd);
             SocketCaps[bSTART_caps + batchIndex * bSTEP_batch + appendInd] =
                 MakeSocketCap(sysStructInd, rotMeta, socketPos, socketFace, pathId); //append socket cap
@@ -158,15 +125,16 @@ void BacktrackGridPath(uint3 id : SV_DispatchThreadID){
     //Otherwise we need to cap off both paths
     InterlockedAdd(counters[bSTART_capCounts + batchIndex], 1, appendInd);
     SocketCaps[bSTART_caps + batchIndex * bSTEP_batch + appendInd] =
-        MakeSocketCap(sysStructInd, rotMeta, cur, nextFI, pathId); //append socket cap
+        MakeSocketCap(sysStructInd, rotMeta, cur + batchOffset, nextFI, pathId); //append socket cap
     
     uint2 strtStct = UnpackStct(anchors[path.x + bSTART_anchors].stct);
     sysStructInd = strtStct.y;
     rotMeta = strtStct.x;
     nextFI = dirs.x;
+    cur = end;
     InterlockedAdd(counters[bSTART_capCounts + batchIndex], 1, appendInd);
     SocketCaps[bSTART_caps + batchIndex * bSTEP_batch + appendInd] =
-        MakeSocketCap(sysStructInd, rotMeta, cur, nextFI, pathId); //append socket cap
+        MakeSocketCap(sysStructInd, rotMeta, cur + batchOffset, nextFI, pathId); //append socket cap
 }
 
 StructuredBuffer<uint2> _StructureIndexes;
@@ -214,13 +182,12 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
 
         if (!IsInsideBatch(localCorner))
             return false;
-        if (batchVisit[indexFromCoord(localCorner) + bSTART_visited].id != pathIndex)
-            return false;
     }
 
     return true;
 }
 
+uint _StructTestDot;
 /* Each thread takes one socketcap:
     - Determine the set of transitions for that socket
     - Only consider structs with one(a cap) or two(hall) ports
@@ -237,8 +204,8 @@ void CapDanglingSockets(uint3 id : SV_DispatchThreadID){
 
     uint3 capEntry = SocketCaps[bSTART_caps + batchIndex * bSTEP_batch + id.x];
     uint emitSysStructInd, emitRotMeta, emitObjectFace;
-    int3 socketLocal;
-    DecodeFrontierNode(capEntry.xy, emitSysStructInd, emitRotMeta, socketLocal, emitObjectFace);
+    int3 socketWorldPos;
+    DecodeSocketCap(capEntry.xy, emitSysStructInd, emitRotMeta, socketWorldPos, emitObjectFace);
     uint pathId = capEntry.z;
 
     uint requiredInputFace = OppositeFace(emitObjectFace);
@@ -274,16 +241,14 @@ void CapDanglingSockets(uint3 id : SV_DispatchThreadID){
                     if ((transition.oppSocketFace & FaceBit(nextBaseFace)) == 0u)
                         continue;
 
-                    int3 originWorld = GetOriginFromSocket(socketLocal + batchOffset, nextSysStructIndex, nextRotMeta, requiredInputFace);
+                    int3 originWorld = GetOriginFromSocket(socketWorldPos, nextSysStructIndex, nextRotMeta, requiredInputFace);
                     if (!VerifyPathBounds(pathId, nextSysStructIndex, nextRotMeta, originWorld))
                         continue;
 
-                    int appendInd;
                     structureData data;
-                    data.structurePos = (float3)(originWorld - batchOffset);
+                    data.structurePos = originWorld;
                     data.meta = PackStctMeta(nextSysStruct.structureIndex, nextRotMeta);
-                    InterlockedAdd(counters[bCOUNT_struct], 1, appendInd);
-                    genStructures[bSTART_struct + appendInd] = data;
+                    AppendStructure(data);
 
                     if (portCount == 1u)
                         return; // cap placed
@@ -297,8 +262,8 @@ void CapDanglingSockets(uint3 id : SV_DispatchThreadID){
                         if ((rotatedPorts & FaceBit(f)) != 0u) { farFace = f; break; }
                     }
 
-                    int3 farSocketWorld = GetSocketObjectPosition(originWorld, nextSysStructIndex, nextRotMeta, farFace);
-                    socketLocal = farSocketWorld - batchOffset;
+                    int3 farSocketObj = GetSocketObjectPosition(originWorld, nextSysStructIndex, nextRotMeta, farFace);
+                    socketWorldPos = farSocketObj;
                     requiredInputFace = OppositeFace(farFace);
                     uint farBaseFace = GetBaseFaceFromObjectFace(farFace, nextRotMeta);
                     curPort = _StructurePorts[nextSysStructIndex * 6u + farBaseFace];

@@ -5,7 +5,9 @@
 #include "Assets/Resources/Compute/Utility/GetIndex.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/SolveAnchorRotation.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/TerrainAnalyzer.hlsl"
-#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathTypes.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathHelpers.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/AppendStructure.hlsl"
+
 const static int numThreads = 128;
 
 struct sysInfo {
@@ -19,12 +21,9 @@ uint bCOUNT_dict;
 
 StructuredBuffer<uint2> _StructureIndexes;
 StructuredBuffer<checkData> _StructureChecks;
-StructuredBuffer<settings> _StructureSettings; //settings for structure
 
 StructuredBuffer<sysInfo> _SystemInfo;
-StructuredBuffer<SystemStructure> _SystemStructures;
 
-RWStructuredBuffer<int> counters;
 StructuredBuffer<int> anchorDict;
 RWStructuredBuffer<anchor> anchors;
 
@@ -48,7 +47,6 @@ bool VerifyChecks(uint index, uint3 rot, float3 origin) {
     return checkInd >= checkEnd;
 }
 
-
 [numthreads(numThreads,1,1)]
 void SelectAnchorPieces (uint3 id : SV_DispatchThreadID){
     if (id.x >= counters[bCOUNT_dict]) return;
@@ -57,20 +55,39 @@ void SelectAnchorPieces (uint3 id : SV_DispatchThreadID){
     anchor self = anchors[index + bSTART_anchors];
     if (self.system == -1) return;
 
-    int stctInd; int rot;
+    int bestStructure = -1;
+    int bestRotation = -1;
+    uint bestScore = 0u;
     uint2 range = _SystemInfo[self.system].structures;
-    for(stctInd = range.x; stctInd < range.y; stctInd++) {
+    for(int stctInd = range.x; stctInd < range.y; stctInd++) {
         SystemStructure stct = _SystemStructures[stctInd];
         settings option = _StructureSettings[stct.structureIndex];
-        rot = SolveForRotation(index, option.config, stct.basePorts);
+        uint score;
+        int rot = SolveForRotation(index, option.config, stct.basePorts, score);
         if (rot == -1) continue;
-        if(VerifyChecks(stct.structureIndex, GetRot(rot), self.pos))
-            break;
+        if (score == 0u) continue;
+        if (!VerifyChecks(stct.structureIndex, GetRot(rot), self.pos))
+            continue;
+
+        if (score > bestScore) {
+            bestScore = score;
+            bestStructure = stctInd;
+            bestRotation = rot;
+        }
     }
 
     // Anchors are stored at bSTART_anchors in the shared generation buffer.
-    if (stctInd >= range.y) anchors[index + bSTART_anchors].stct = -1;
-    else anchors[index + bSTART_anchors].stct = ConcatStct(rot, stctInd);
+    if (bestStructure == -1) {
+        anchors[index + bSTART_anchors].stct = -1;
+    } else {
+        anchors[index + bSTART_anchors].stct = ConcatStct(bestRotation, bestStructure);
+        
+        //add strucutre to generation queue
+        structureData data;
+        data.structurePos = self.pos;
+        data.meta = PackStctMeta(_SystemStructures[bestStructure].structureIndex, bestRotation);
+        AppendStructure(data);
+    }
 }
 
 
@@ -80,24 +97,8 @@ uint bCOUNT_paths;
 
 static const int3 NO_ENDS_COORD = int3(-32768, -32768, -32768);
 
-
-
-static const int3x3 FaceCoord[6] = {
-    {0, 0, 1, 1, 0, 0, 0, 1, 0}, //ZXY
-    {0, 0, 1, 1, 0, 0, 0, 1, 0}, //ZXY
-    {1, 0, 0, 0, 0, 1, 0, 1, 0}, //XZY
-    {1, 0, 0, 0, 0, 1, 0, 1, 0}, //XZY
-    {1, 0, 0, 0, 1, 0, 0, 0, 1}, //XYZ
-    {1, 0, 0, 0, 1, 0, 0, 0, 1} //XYZ
-};
-
-float Align(uint face) { return face < 3 ? 0 : 1; }
-
-
-StructuredBuffer<Port> _StructurePorts;
 RWStructuredBuffer<uint3> anchorPaths;
 RWStructuredBuffer<pathEnds> endPoints;
-
 
 bool IsNoEnds(pathEnds value) {
     return all(value.start == NO_ENDS_COORD) && all(value.end == NO_ENDS_COORD);
@@ -108,42 +109,9 @@ bool IsPartialEnds(pathEnds value) {
 }
 uint IsPartialStart(pathEnds value) { return all(value.start == NO_ENDS_COORD) ? 1 : 0; }
 int3 GetPartialEnd(pathEnds value) {
-    return IsPartialStart(value) ? value.start : value.end;
+    return IsPartialStart(value) ? value.end : value.start;
 }
 
-int3 GetPortOffset(anchor root, uint port) {
-    /*
-    Finds the specific position. of a port of an anchor piece,
-        - convert port to 3D vector direction 
-        - reverse direction based on struct rotation
-        - convert resultant 'base' vector back to face index
-        - Determine 'base' port position without rotation
-            - Lookup 2D offset based on face index
-            - multiply by FaceCoord which embeds the 2D vector
-            into the correct axises of the 3D vector.
-            - multiply with struct size to convert from UV(0-1) space
-            to object space
-        - Anchor(origin) is always lowest point of rotated struct, 
-            so rotate struct to determine transformed offset from lowest point 
-            and then add that transform to the actual anchor(origin).
-    */
-    uint2 s1 = UnpackStct(root.stct);
-    uint3 s1RInd = GetRot(s1.x);
-    SystemStructure stct = _SystemStructures[s1.y];
-    settings stSet = _StructureSettings[stct.structureIndex];
-    float3x3 s1Rot = RotationLookupTable[s1RInd.y][s1RInd.x][s1RInd.z];
-    float3x3 s1Inverse = transpose(s1Rot);
-    uint f1 = DirToFaceIdx(mul(s1Inverse, FaceIdxToDir(port)));
-
-    float3 basePortPos = mul(FaceCoord[f1], float3(_StructurePorts[s1.y].UV, Align(f1))) * stSet.size;
-
-    float3 length = mul(s1Rot, stSet.size);
-    float3 newOrigin = min(length, 0);
-    float3 rotatedPos = mul(s1Rot, basePortPos);
-    float3 transformedPos = rotatedPos - newOrigin;
-
-    return transformedPos + root.pos;
-}
 
 [numthreads(numThreads,1,1)]
 void GetRealEndpoints (uint3 id : SV_DispatchThreadID){
@@ -157,9 +125,15 @@ void GetRealEndpoints (uint3 id : SV_DispatchThreadID){
     endPt.start = NO_ENDS_COORD;
     endPt.end = NO_ENDS_COORD;
     if (start.system != -1 && start.stct != -1) {
-        endPt.start = GetPortOffset(start, dirs.x);
+        uint2 stctInfo = UnpackStct(start.stct);
+        uint rotatedPorts = GetRotatedPortMask(_SystemStructures[stctInfo.y].basePorts, stctInfo.x);
+        if ((rotatedPorts & FaceBit(dirs.x)) != 0u)
+            endPt.start = GetSocketObjectPosition(start.pos, stctInfo.y, stctInfo.x, dirs.x);
     } if (end.system != -1 && end.stct != -1) {
-        endPt.end = GetPortOffset(end, dirs.y);
+        uint2 stctInfo = UnpackStct(end.stct);
+        uint rotatedPorts = GetRotatedPortMask(_SystemStructures[stctInfo.y].basePorts, stctInfo.x);
+        if ((rotatedPorts & FaceBit(dirs.y)) != 0u)
+            endPt.end = GetSocketObjectPosition(end.pos, stctInfo.y, stctInfo.x, dirs.y);
     }
     
     endPoints[id.x + bSTART_endpts] = endPt;
@@ -167,16 +141,12 @@ void GetRealEndpoints (uint3 id : SV_DispatchThreadID){
 
 int connectRadius;
 int computeSize;
-int oCellOffset;
 
 uint bSTEP_batch;
-uint bSTART_olpCounts; //overlap counts
 uint bSTART_batchCounts;
 
-uint bSTART_overlap;
 uint bSTART_batch;
 
-RWStructuredBuffer<int> overlapLines;
 RWStructuredBuffer<int> batchLines;
 RWStructuredBuffer<uint3> SocketCaps; 
 uint bSTART_capCounts; 
@@ -232,8 +202,8 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
     if (IsPartialEnds(ep)) {
         uint3 path = anchorPaths[id.x + bSTART_paths];
         uint2 dirs = GetFaceDirs(path.z);
-        int pInd = IsPartialStart(ep) ? path.x : path.y; 
-        int dir = IsPartialStart(ep) ? dirs.x : dirs.y;
+        int pInd = IsPartialStart(ep) ? path.y : path.x;
+        int dir = IsPartialStart(ep) ? dirs.y : dirs.x;
         uint2 stct = UnpackStct(anchors[pInd + bSTART_anchors].stct);
 
         InterlockedAdd(counters[bSTART_capCounts + containedFlat], 1, containedSlot);
@@ -242,18 +212,5 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
     } else {
         InterlockedAdd(counters[bSTART_batchCounts + containedFlat], 1, containedSlot);
         batchLines[bSTART_batch + containedFlat * bSTEP_batch + containedSlot] = (int)id.x;
-    }
-
-    int3 bRange = bMax - bMin + 1;
-    int totalOlp = bRange.x * bRange.y * bRange.z;
-    for (int oi = 0; oi < totalOlp; oi++) {
-        int bx = bMin.x + oi % bRange.x;
-        int by = bMin.y + (oi / bRange.x) % bRange.y;
-        int bz = bMin.z + oi / (bRange.x * bRange.y);
-
-        int olpSlot;
-        int olpFlat = indexFromCoord(uint3(bx, by,bz));
-        InterlockedAdd(counters[bSTART_olpCounts + olpFlat], 1, olpSlot);
-        overlapLines[bSTART_overlap + olpFlat * bSTEP_batch + olpSlot] = (int)id.x;
     }
 }

@@ -6,6 +6,8 @@ static const uint MAX_BATCH_STEPS = 16u;
 static const int INVALID_VISITED = -1;
 static const uint FRONTIER_COORD_MASK = 0x1FFFFFFFu;
 static const uint INVALID_PATH = 0xFFFFFFFFu;
+int numVoxelsPerChunk;
+int oCellOffset;
 int batchSize;
 
 struct pathEnds {
@@ -51,8 +53,8 @@ struct anchor {
 };
 
 struct PathNode {
-    uint id;
-    int visited;
+    int id;
+    uint visited;
 };
 
 struct structureData {
@@ -62,11 +64,10 @@ struct structureData {
 
 inline uint3 GetRot(uint meta) { return uint3((meta >> 2) & 0x3u, meta & 0x3u, (meta >> 4) & 0x3u); }
 inline uint PackRot(uint3 rot) { return (rot.y & 0x3u) | ((rot.x & 0x3u) << 2) | ((rot.z & 0x3u) << 4); }
-inline uint ConcatStct(uint rot, uint index) { return (rot << 24) | index & 0xFFFFFF; }
+inline uint ConcatStct(uint rot, uint index) { return (rot << 24) | index & 0xFFFFFFu; }
 inline uint2 UnpackStct(uint stct) { return uint2((stct >> 24) & 0x3Fu, stct & 0xFFFFFFu); }
 
-inline uint PackVisited(uint sysStructIndex, uint rotMeta, uint incomingFace, uint outgoingFace)
-{
+inline uint PackVisited(uint sysStructIndex, uint rotMeta, uint incomingFace, uint outgoingFace) {
     return (sysStructIndex & 0xFFFFFu) | ((rotMeta & 0x3Fu) << 20) | ((incomingFace & 0x7u) << 26) | ((outgoingFace & 0x7u) << 29);
 }
 
@@ -92,11 +93,9 @@ inline uint RotMetaFromIndex(uint rotIndex, uint maxY, uint maxX)
     return PackRot(uint3(rotX, rotY, rotZ));
 }
 
-int3 DecodeBatchCoord(uint flat)
+int3 DecodeBatchCoord(uint flat, int sideLength)
 {
-    int flatCoord = (int)flat;
-    int plane = batchSize * batchSize;
-    return int3(flatCoord % batchSize, (flatCoord / batchSize) % batchSize, flatCoord / plane);
+    return coordFromIndexManual(flat, (uint)sideLength);
 }
 
 uint2 MakeFrontierNode(uint sysStructIndex, uint rotMeta, int3 localCoord, uint objectFace)
@@ -110,11 +109,23 @@ void DecodeFrontierNode(uint2 packed, out uint sysStructIndex, out uint rotMeta,
     sysStructIndex = packed.x & 0xFFFFFFu;
     rotMeta = (packed.x >> 24) & 0x3Fu;
     objectFace = (packed.y >> 29) & 0x7u;
-    localCoord = DecodeBatchCoord(packed.y & FRONTIER_COORD_MASK);
+    localCoord = DecodeBatchCoord(packed.y & FRONTIER_COORD_MASK, batchSize);
+}
+ 
+void DecodeSocketCap(uint2 packed, out uint sysStructIndex, out uint rotMeta, out int3 localCoord, out uint objectFace) {
+    sysStructIndex = packed.x & 0xFFFFFFu;
+    rotMeta = (packed.x >> 24) & 0x3Fu;
+    objectFace = (packed.y >> 29) & 0x7u;
+    localCoord = DecodeBatchCoord(packed.y & FRONTIER_COORD_MASK, numVoxelsPerChunk) + oCellOffset;
 }
 
 uint3 MakeSocketCap(uint sysStructInd, uint rotMeta, int3 socketPos, int socketFace, int pathInd) {
-    return uint3(MakeFrontierNode(sysStructInd, rotMeta, socketPos, socketFace), pathInd);
-}//
+    socketPos -= oCellOffset;
+    return uint3(PackFrontierMeta(sysStructInd, rotMeta),
+        ((indexFromCoordManual(socketPos, numVoxelsPerChunk)) & FRONTIER_COORD_MASK)
+        | ((socketFace & 0x7u) << 29),
+        pathInd
+    );
+}
 
 #endif

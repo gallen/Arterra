@@ -75,7 +75,8 @@ void PoissonPrune(uint3 id : SV_DispatchThreadID) {
     if (anchors[index].system == -1) return;
 
     int3 position = anchors[index].pos;
-    uint myPriority = Random(position);
+    int3 sOffset = oCCoord * cellsPerChunk * cellSize;
+    uint myPriority = Random(position + sOffset);
 
     bool alive = true;
 
@@ -95,7 +96,7 @@ void PoissonPrune(uint3 id : SV_DispatchThreadID) {
         float d = length((float3)neighbor - (float3)position);
 
         if (d < cellSize) {
-            uint neighborPriority = Random(neighbor);
+            uint neighborPriority = Random(neighbor + sOffset);
 
             if (neighborPriority > myPriority || (neighborPriority == myPriority && nIndex > index)) {
                 alive = false;

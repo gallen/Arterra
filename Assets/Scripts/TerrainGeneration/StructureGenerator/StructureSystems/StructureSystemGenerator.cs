@@ -7,6 +7,7 @@ using UnityEngine;
 using Newtonsoft.Json;
 using FMOD.Studio;
 using System;
+using Arterra.Data.Biome;
 
 namespace Arterra.Data.Structure.Jigsaw {
     [Serializable]
@@ -116,9 +117,9 @@ public static class Generator {
         AnchorSampler.SetInt("coarseSSystemNoise", jigsaw.CoarseSSystemNoise);
         AnchorSampler.SetInt("fineSSystemNoise", jigsaw.FineSSystemNoise);
         AnchorSampler.SetInt("cellSize", jigsaw.CellSize);
-        AnchorSampler.SetInt("oCellOffset", originOffset);
         AnchorSampler.SetInt("cellsPerChunk", cellsPerChunk);
         AnchorSampler.SetInt("bSTART_anchors", offsets.anchorsStart);
+        AnchorSampler.SetInt("oCellOffset", originOffset);
         Structure.Generator.SetStructIDSettings(AnchorSampler);
 
         kernel = AnchorSampler.FindKernel("PoissonPrune");
@@ -138,6 +139,15 @@ public static class Generator {
         GraphConnector.SetInt("bSTART_dict", offsets.anchorDictStart);
         GraphConnector.SetInt("bSTART_sockets", offsets.socketUsageStart);
 
+        kernel = GraphConnector.FindKernel("SetSocketConnections");
+        GraphConnector.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        GraphConnector.SetBuffer(kernel, "anchorDict", UtilityBuffers.GenerationBuffer);
+        GraphConnector.SetBuffer(kernel, "socketUsage", UtilityBuffers.GenerationBuffer);
+        GraphConnector.SetBuffer(kernel, "anchors", UtilityBuffers.GenerationBuffer);
+        GraphConnector.SetInt("cellSize", jigsaw.CellSize);
+        GraphConnector.SetInt("connectRadius", jigsaw.MaxConnectionDist);
+        GraphConnector.SetInt("bSTART_anchors", offsets.anchorsStart);
+
         kernel = GraphConnector.FindKernel("ConnectGraph");
         GraphConnector.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
         GraphConnector.SetBuffer(kernel, "anchorDict", UtilityBuffers.GenerationBuffer);
@@ -155,6 +165,7 @@ public static class Generator {
         SanitateBatches.SetBuffer(kernel, "anchorDict", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "socketUsage", UtilityBuffers.GenerationBuffer);
+        SanitateBatches.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetInt("bCOUNT_dict", offsets.anchorDictCounter);
         SanitateBatches.SetInt("bSTART_dict", offsets.anchorDictStart);
         SanitateBatches.SetInt("bSTART_anchors", offsets.anchorsStart);
@@ -162,6 +173,8 @@ public static class Generator {
         SanitateBatches.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
         SanitateBatches.SetInt("bSTART_paths", offsets.anchorPathStart);
         SanitateBatches.SetInt("bSTART_endpts", offsets.pathEndsStart);
+        SanitateBatches.SetInt("bCOUNT_struct", offsets.finalStructsCounter);
+        SanitateBatches.SetInt("bSTART_struct", offsets.finalStructsStart);
         SanitateBatches.SetInt("connectRadius", jigsaw.MaxConnectionDist);
         Structure.Generator.SetStructIDSettings(SanitateBatches);
 
@@ -181,10 +194,8 @@ public static class Generator {
         SanitateBatches.SetBuffer(kernel, "SocketCaps", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetInt("oCellOffset", originOffset);
         SanitateBatches.SetInt("bSTEP_batch", batchStep);
-        SanitateBatches.SetInt("bSTART_olpCounts", offsets.batchOverlapCounter);
         SanitateBatches.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
         SanitateBatches.SetInt("bSTART_capCounts", offsets.batchSocketCapCounter);
-        SanitateBatches.SetInt("bSTART_overlap", offsets.batchOverlapStart);
         SanitateBatches.SetInt("bSTART_batch", offsets.batchPathStart);
         SanitateBatches.SetInt("bSTART_caps", offsets.batchSocketCapStart);
 
@@ -213,8 +224,6 @@ public static class Generator {
         PathSetupRetriever.SetBuffer(kernel, "batchLines", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetInt("bSTEP_batch", batchStep);
         PathSetupRetriever.SetInt("bSTART_batch", offsets.batchPathStart);
-        PathSetupRetriever.SetInt("bSTART_overlap", offsets.batchOverlapStart);
-        PathSetupRetriever.SetInt("bSTART_olpCounts", offsets.batchOverlapCounter);
         PathSetupRetriever.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
         PathSetupRetriever.SetInt("bSTART_visited", offsets.batchVistStart);
         PathSetupRetriever.SetInt("bSTART_endpts", offsets.pathEndsStart);
@@ -234,6 +243,7 @@ public static class Generator {
         PathSetupRetriever.SetInt("bSTART_caps", offsets.batchSocketCapStart);
         PathSetupRetriever.SetInt("bSTART_paths", offsets.anchorPathStart);
         PathSetupRetriever.SetInt("bSTART_anchors", offsets.anchorsStart);
+        PathSetupRetriever.SetInt("oCellOffset", originOffset);
 
         kernel = PathSetupRetriever.FindKernel("CapDanglingSockets");
         PathSetupRetriever.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
@@ -241,13 +251,12 @@ public static class Generator {
         PathSetupRetriever.SetBuffer(kernel, "SocketCaps", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
         Structure.Generator.SetStructIDSettings(PathSetupRetriever);
+        Shader.SetGlobalInt("_StructTestDot", Config.CURRENT.Generation.Structures.value.StructureDictionary.RetrieveIndex("Dot"));
+        Shader.SetGlobalInt("_StructTestDot1", Config.CURRENT.Generation.Structures.value.StructureDictionary.RetrieveIndex("Dot1"));
     }
 
     public static bool PlanStructureSystems(int chunkSize, int depth, int3 CCoord) {
         if (depth > jigsaw.MaxSystemLoD) return false;
-        int expandedChunkSize = (chunkSize * (1 << depth)) + (jigsaw.MaxConnectionDist * 4);
-        int maxCellsPerAxis = Mathf.CeilToInt((float)expandedChunkSize / jigsaw.CellSize);
-        int maxCells = maxCellsPerAxis * maxCellsPerAxis * maxCellsPerAxis;
 
         int counterStart = offsets.countersRange.x;
         int counterEnd = offsets.countersRange.y;
@@ -256,26 +265,28 @@ public static class Generator {
             counterEnd - counterStart,
             counterStart
         );
-        //ValidateCountersCleared(counterStart, counterEnd);
-
         SampleSystemAnchors(chunkSize, depth, CCoord);
-        //ValidateSampleAnchorsState(maxCells);
-
         ConnectGraphAnchors(chunkSize, depth, CCoord);
-        //ValidateConnectedGraphState(maxCells);
-
         SanitateComputeBatches(chunkSize, depth, CCoord);
-        int batchSize = math.min(expandedChunkSize, jigsaw.MaxBatchSize);
-        int batchStride = batchSize - jigsaw.MaxConnectionDist;
-        int batchesPerAxis = (expandedChunkSize - batchSize) / batchStride + 1;
-        int maxBatches = batchesPerAxis * batchesPerAxis * batchesPerAxis;
-        //ValidateSanitatedBatchesState(maxBatches, maxCells);
         PopulatePathsWithStructures(chunkSize, depth, CCoord);
-        ValidatePopulatePathsState(maxBatches, maxCells);
+
+        int count = ReadCounterValue(Generator.offsets.finalStructsCounter);
+        UtilityBuffers.CopyBufferRegion(
+            Generator.offsets.finalStructsCounter,
+            Generator.offsets.finalStructsStart,
+            Structure.Generator.offsets.structureCounter,
+            Structure.Generator.offsets.structureStart,
+            Creator.STRUCTURE_STRIDE_WORD
+        );
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        //LogCopiedStructureRegion();
+#endif
         return true;
     }
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
+    private const int GEN_STRUCT_WORD = 4;
+
     private static int ReadCounterValue(int counterOffset) {
         UtilityBuffers.CopyCount(UtilityBuffers.GenerationBuffer, UtilityBuffers.TransferBuffer, counterOffset, 0);
         UtilityBuffers.TransferBuffer.GetData(_counterReadback, 0, 0, 1);
@@ -291,208 +302,60 @@ public static class Generator {
         UtilityBuffers.GenerationBuffer.GetData(destination, 0, start, length);
     }
 
-    private static void ValidateCountersCleared(int counterStart, int counterEnd) {
-        int length = math.max(0, counterEnd - counterStart);
-        if (length == 0) return;
-
-        int[] counters = new int[length];
-        ReadBufferRegion(counterStart, length, counters);
-        for (int i = 0; i < counters.Length; i++) {
-            Require(counters[i] == 0, $"counter[{counterStart + i}] expected 0 after clear, got {counters[i]}");
-        }
+    private static int3 DecodeRotMeta(uint rotMeta) {
+        return new int3(
+            (int)((rotMeta >> 2) & 0x3u),
+            (int)(rotMeta & 0x3u),
+            (int)((rotMeta >> 4) & 0x3u)
+        );
     }
 
-    private static void ValidateSampleAnchorsState(int maxCells) {
-        int dictCount = ReadCounterValue(offsets.anchorDictCounter);
-        Require(dictCount >= 0 && dictCount <= maxCells,
-            $"anchorDictCounter out of bounds ({dictCount}, expected [0, {maxCells}])");
-        
-        if (dictCount == 0) return;
+    private static void LogCopiedStructureRegion() {
+        int sourceCount = ReadCounterValue(offsets.finalStructsCounter);
+        int destCount = ReadCounterValue(Structure.Generator.offsets.structureCounter);
+        int totalStructureCount = Config.CURRENT.Generation.Structures.value.StructureDictionary.Reg.Count;
 
-        int sampleCount = math.min(dictCount, SANITY_SAMPLE_COUNT);
-        int[] anchorIndices = new int[sampleCount];
-        ReadBufferRegion(offsets.anchorDictStart, sampleCount, anchorIndices);
+        Debug.Log($"Jigsaw copy readback: sourceCount={sourceCount}, destCount={destCount}, sourceStart={offsets.finalStructsStart}, destStart={Structure.Generator.offsets.structureStart}");
 
-        int[] anchorData = new int[ANCHOR_STRIDE_WORD];
-        // offsets.anchorsStart is in anchor-element coordinates (GPU struct indexing)
-        // Convert to word offset: GPU element M -> word M * ANCHOR_STRIDE_WORD
-        int anchorsStartWordOffset = offsets.anchorsStart * ANCHOR_STRIDE_WORD;
-        
-        for (int i = 0; i < sampleCount; i++) {
-            int anchorIndex = anchorIndices[i];
-            Require(anchorIndex >= 0 && anchorIndex < maxCells,
-                $"anchorDict[{i}] has invalid anchor index {anchorIndex}, expected [0, {maxCells})");
-
-            // Each anchor is ANCHOR_STRIDE_WORD ints; compute absolute word position in buffer
-            int anchorWordStart = anchorsStartWordOffset + anchorIndex * ANCHOR_STRIDE_WORD;
-            ReadBufferRegion(anchorWordStart, ANCHOR_STRIDE_WORD, anchorData);
-            int systemId = anchorData[3];
-            Require(systemId >= 0,
-                $"anchor[{anchorIndex}] referenced by anchorDict has invalid system id {systemId}");
-        }
-    }
-
-    private static void ValidateConnectedGraphState(int maxCells) {
-        int dictCount = ReadCounterValue(offsets.anchorDictCounter);
-        int pathCount = ReadCounterValue(offsets.anchorPathCounter);
-        int maxPaths = maxCells * 6;
-
-        Require(pathCount >= 0 && pathCount <= maxPaths,
-            $"anchorPathCounter out of bounds ({pathCount}, expected [0, {maxPaths}])");
-
-        if (pathCount == 0) return;
-
-        int sampleCount = math.min(pathCount, SANITY_SAMPLE_COUNT);
-        int[] pathData = new int[sampleCount * ANCHOR_PATH_WORD];
-        
-        // offsets.anchorPathStart is in path-element coordinates; convert to word offset
-        int anchorPathStartWordOffset = offsets.anchorPathStart * ANCHOR_PATH_WORD;
-        ReadBufferRegion(anchorPathStartWordOffset, pathData.Length, pathData);
-        
-        for (int i = 0; i < sampleCount; i++) {
-            int baseOffset = i * ANCHOR_PATH_WORD;
-            int startIndex = pathData[baseOffset + 0];
-            int endIndex = pathData[baseOffset + 1];
-            int socketMask = pathData[baseOffset + 2];
-
-            Require(startIndex >= 0 && startIndex < maxCells,
-                $"anchorPaths[{i}].x invalid ({startIndex}, expected [0, {maxCells}))");
-            Require(endIndex >= 0 && endIndex < maxCells,
-                $"anchorPaths[{i}].y invalid ({endIndex}, expected [0, {maxCells}))");
-            Require(socketMask != 0,
-                $"anchorPaths[{i}].z expected non-zero socket mask");
+        if (destCount <= 0) {
+            Debug.Log("Jigsaw copy readback: destination structure region is empty after CopyBufferRegion.");
+            return;
         }
 
-        int[] socketSample = new int[math.min(dictCount, SANITY_SAMPLE_COUNT)];
-        if (socketSample.Length > 0) {
-            // offsets.socketUsageStart is in socket-element coordinates  
-            int socketUsageStartWordOffset = offsets.socketUsageStart * 1;  // SOCKET_USAGE_WORD = 1
-            ReadBufferRegion(socketUsageStartWordOffset, socketSample.Length, socketSample);
-            bool anyUsed = false;
-            for (int i = 0; i < socketSample.Length; i++) {
-                if (socketSample[i] != 0) {
-                    anyUsed = true;
-                    break;
-                }
-            }
-            Require(anyUsed || pathCount == 0,
-                "socket usage region did not receive any updates after graph connection");
-        }
-    }
+        int[] structData = new int[destCount * GEN_STRUCT_WORD];
+        ReadBufferRegion(Structure.Generator.offsets.structureStart * GEN_STRUCT_WORD, structData.Length, structData);
 
-    private static void ValidateSanitatedBatchesState(int maxBatches, int maxCells) {
-        int pathCount = ReadCounterValue(offsets.anchorPathCounter);
-        Require(pathCount >= 0 && pathCount <= maxCells * 6,
-            $"anchorPathCounter invalid before batch sanitation ({pathCount})");
-
-        int[] overlapCounts = new int[maxBatches];
-        int[] batchCounts = new int[maxBatches];
-        int[] capCounts = new int[maxBatches];
-
-        ReadBufferRegion(offsets.batchOverlapCounter, maxBatches, overlapCounts);
-        ReadBufferRegion(offsets.batchPathCounter, maxBatches, batchCounts);
-        ReadBufferRegion(offsets.batchSocketCapCounter, maxBatches, capCounts);
-        int maxBatchEntries = Mathf.CeilToInt((float)jigsaw.MaxBatchSize / jigsaw.CellSize);
-        maxBatchEntries = maxBatchEntries * maxBatchEntries * maxBatchEntries * 6;
-
-        int overlapTotal = 0;
-        int batchTotal = 0;
-        int capTotal = 0;
-
-        for (int i = 0; i < maxBatches; i++) {
-            Require(overlapCounts[i] >= 0, $"batch overlap count at {i} is negative ({overlapCounts[i]})");
-            Require(batchCounts[i] >= 0, $"batch path count at {i} is negative ({batchCounts[i]})");
-            Require(capCounts[i] >= 0, $"batch cap count at {i} is negative ({capCounts[i]})");
-            Require(overlapCounts[i] <= maxBatchEntries,
-                $"batch overlap count at {i} exceeds capacity ({overlapCounts[i]} > {maxBatchEntries})");
-            Require(batchCounts[i] <= maxBatchEntries,
-                $"batch path count at {i} exceeds capacity ({batchCounts[i]} > {maxBatchEntries})");
-            Require(capCounts[i] <= maxBatchEntries,
-                $"batch cap count at {i} exceeds capacity ({capCounts[i]} > {maxBatchEntries})");
-
-            overlapTotal += overlapCounts[i];
-            batchTotal += batchCounts[i];
-            capTotal += capCounts[i];
-        }
-
-        if (pathCount > 0) {
-            Require(overlapTotal > 0 || batchTotal > 0 || capTotal > 0,
-                $"batch sanitation produced no overlap/path/cap assignments despite non-zero({pathCount}) paths");
-        }
-    }
-
-    private static void ValidatePopulatePathsState(int maxBatches, int maxCells) {
-        int finalStructCount = ReadCounterValue(offsets.finalStructsCounter);
-        int maxPaths = maxCells * 6;
-        int maxBatchEntries = Mathf.CeilToInt((float)jigsaw.MaxBatchSize / jigsaw.CellSize);
-        maxBatchEntries = maxBatchEntries * maxBatchEntries * maxBatchEntries * 6;
-        const int GEN_STRUCT_WORD = 4;
-
-        Debug.Log(finalStructCount);
-        Require(finalStructCount >= 0,
-            $"finalStructsCounter is negative ({finalStructCount})");
-        Require(finalStructCount <= maxPaths * 6,
-            $"finalStructsCounter exceeds plausible bound ({finalStructCount} > {maxPaths * 6})");
-
-        int[] batchPathCounts = new int[maxBatches];
-        int[] batchCapCounts = new int[maxBatches];
-        ReadBufferRegion(offsets.batchPathCounter, maxBatches, batchPathCounts);
-        ReadBufferRegion(offsets.batchSocketCapCounter, maxBatches, batchCapCounts);
-
-        for (int i = 0; i < maxBatches; i++) {
-            Require(batchPathCounts[i] >= 0,
-                $"batchPathCounter[{i}] is negative ({batchPathCounts[i]}) after pathfind");
-            Require(batchPathCounts[i] <= maxBatchEntries,
-                $"batchPathCounter[{i}] exceeds capacity ({batchPathCounts[i]} > {maxBatchEntries}) after pathfind");
-            Require(batchCapCounts[i] >= 0,
-                $"batchSocketCapCounter[{i}] is negative ({batchCapCounts[i]}) after pathfind");
-            Require(batchCapCounts[i] <= maxBatchEntries,
-                $"batchSocketCapCounter[{i}] exceeds capacity ({batchCapCounts[i]} > {maxBatchEntries}) after pathfind");
-        }
-
-        if (finalStructCount == 0) return;
-
-        // Count total jigsaw system structures for structure-index bounds checking
-        // meta >> 7 is an index into the flat list of all JigsawSystem.Structures entries
-        int totalSysStructCount = Config.CURRENT.Generation.Structures.value.StructureDictionary.Reg.Count;
-
-        // Read ALL generated structs: layout is float3 structurePos (words 0-2) + uint meta (word 3)
-        int[] structData = new int[finalStructCount * GEN_STRUCT_WORD];
-        ReadBufferRegion(offsets.finalStructsStart * GEN_STRUCT_WORD, structData.Length, structData);
-
-        for (int i = 0; i < finalStructCount; i++) {
+        for (int i = 0; i < destCount; i++) {
             int baseWord = i * GEN_STRUCT_WORD;
             float posX = BitConverter.Int32BitsToSingle(structData[baseWord + 0]);
             float posY = BitConverter.Int32BitsToSingle(structData[baseWord + 1]);
             float posZ = BitConverter.Int32BitsToSingle(structData[baseWord + 2]);
-            uint meta  = (uint)structData[baseWord + 3];
-            uint structIndex = meta >> 7;
+            uint meta = (uint)structData[baseWord + 3];
+            uint rotMeta = meta & 0x3Fu;
+            uint structureIndex = meta >> 7;
+            bool isFinite = !float.IsNaN(posX) && !float.IsInfinity(posX)
+                && !float.IsNaN(posY) && !float.IsInfinity(posY)
+                && !float.IsNaN(posZ) && !float.IsInfinity(posZ);
+            bool validIndex = structureIndex < (uint)totalStructureCount;
+            int3 rot = DecodeRotMeta(rotMeta);
 
-            Require(!float.IsNaN(posX) && !float.IsInfinity(posX),
-                $"genStructures[{i}].structurePos.x is non-finite ({posX})");
-            Require(!float.IsNaN(posY) && !float.IsInfinity(posY),
-                $"genStructures[{i}].structurePos.y is non-finite ({posY})");
-            Require(!float.IsNaN(posZ) && !float.IsInfinity(posZ),
-                $"genStructures[{i}].structurePos.z is non-finite ({posZ})");
-            Require(totalSysStructCount == 0 || structIndex < (uint)totalSysStructCount,
-                $"genStructures[{i}].meta structureIndex {structIndex} out of range [0, {totalSysStructCount})");
+            Debug.Log(
+                $"Jigsaw copied structure[{i}]: pos=({posX}, {posY}, {posZ}), meta=0x{meta:X8}, structureIndex={structureIndex}, rot=({rot.x}, {rot.y}, {rot.z}), finite={isFinite}, validIndex={validIndex}"
+            );
         }
     }
-#else
-    private static void ValidateCountersCleared(int counterStart, int counterEnd) {}
-    private static void ValidateSampleAnchorsState(int maxCells) {}
-    private static void ValidateConnectedGraphState(int maxCells) {}
-    private static void ValidateSanitatedBatchesState(int maxBatches, int maxCells, int maxBatchEntries) {}
-    private static void ValidatePopulatePathsState(int maxBatches, int maxCells) {}
 #endif
 
+
     public static void SampleSystemAnchors(int chunkSize, int depth, int3 CCoord) {
-        chunkSize *= 1 << depth;
-        chunkSize += jigsaw.MaxConnectionDist * 4;
-        int numCellsPerAxis = Mathf.CeilToInt((float)chunkSize / jigsaw.CellSize);
+        int worldChunkSize = chunkSize * (1 << depth);
+        int paddedChunkSize = worldChunkSize + jigsaw.MaxConnectionDist * 4;
+        int cellsPerChunk = worldChunkSize / jigsaw.CellSize;
+        int numCellsPerAxis = Mathf.CeilToInt((float)paddedChunkSize / jigsaw.CellSize);
         AnchorSampler.SetInts("oCCoord", new int[] {CCoord.x, CCoord.y, CCoord.z});
+        AnchorSampler.SetInt("cellsPerChunk", cellsPerChunk);
         AnchorSampler.SetInt("numPointsPerAxis", numCellsPerAxis);
-        UtilityBuffers.SetSampleData(AnchorSampler, (float3)(CCoord * chunkSize), 1);
+        UtilityBuffers.SetSampleData(AnchorSampler, (float3)(CCoord * worldChunkSize), 1);
 
         int kernel = AnchorSampler.FindKernel("SamplePoints");
         AnchorSampler.GetKernelThreadGroupSizes(kernel, out uint threadGroupSize, out uint _, out _);
@@ -504,19 +367,32 @@ public static class Generator {
     }
 
     public static void ConnectGraphAnchors(int chunkSize, int depth, int3 CCoord) {
-        chunkSize *= 1 << depth;
-        chunkSize += jigsaw.MaxConnectionDist * 4;
-        int numCellsPerAxis = Mathf.CeilToInt((float)chunkSize / jigsaw.CellSize);
+        int worldChunkSize = chunkSize * (1 << depth);
+        int paddedChunkSize = worldChunkSize + jigsaw.MaxConnectionDist * 4;
+        int cellsPerChunk = worldChunkSize / jigsaw.CellSize;
+        int numCellsPerAxis = Mathf.CeilToInt((float)paddedChunkSize / jigsaw.CellSize);
         GraphConnector.SetInts("oCCoord", new int[] {CCoord.x, CCoord.y, CCoord.z});
+        GraphConnector.SetInt("cellsPerChunk", cellsPerChunk);
         GraphConnector.SetInt("numPointsPerAxis", numCellsPerAxis);
 
         int kernel = GraphConnector.FindKernel("ClearSockets");
         ComputeBuffer args = UtilityBuffers.CountToArgs(GraphConnector, UtilityBuffers.GenerationBuffer, offsets.anchorDictCounter, kernel);
         GraphConnector.DispatchIndirect(kernel, args);
 
+        kernel = GraphConnector.FindKernel("SetSocketConnections");
+        args = UtilityBuffers.CountToArgs(GraphConnector, UtilityBuffers.GenerationBuffer, offsets.anchorDictCounter, kernel);
+        GraphConnector.DispatchIndirect(kernel, args);
+        
         kernel = GraphConnector.FindKernel("ConnectGraph");
         args = UtilityBuffers.CountToArgs(GraphConnector, UtilityBuffers.GenerationBuffer, offsets.anchorDictCounter, kernel);
         GraphConnector.DispatchIndirect(kernel, args);
+
+    #if UNITY_EDITOR || DEVELOPMENT_BUILD
+        /*
+        int anchorCount = ReadCounterValue(offsets.anchorDictCounter);
+        int pathCount = ReadCounterValue(offsets.anchorPathCounter);
+        Debug.Log($"Jigsaw graph readback: chunk={CCoord}, depth={depth}, anchors={anchorCount}, paths={pathCount}");*/
+    #endif
     }
 
     public static void SanitateComputeBatches(int chunkSize, int depth, int3 CCoord) {
@@ -537,6 +413,7 @@ public static class Generator {
 
         SanitateBatches.SetInt("batchSize", batchSize);
         SanitateBatches.SetInt("numPointsPerAxis", batchesPerAxis);
+        SanitateBatches.SetInt("numVoxelsPerChunk", chunkSize);
 
         kernel = SanitateBatches.FindKernel("FilterPathBatches");
         args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorPathCounter, kernel);
@@ -544,17 +421,18 @@ public static class Generator {
     }
 
     public static void PopulatePathsWithStructures(int chunkSize, int depth, int3 CCoord) {
-        chunkSize *= 1 << depth;
-        chunkSize += jigsaw.MaxConnectionDist * 4;
+        int worldChunkSize = chunkSize * (1 << depth);
+        chunkSize = worldChunkSize + jigsaw.MaxConnectionDist * 4;
 
         int batchSize = math.min(chunkSize, jigsaw.MaxBatchSize);
         int batchStride = batchSize - jigsaw.MaxConnectionDist;
         int batchesPerAxis = (chunkSize - batchSize) / batchStride + 1;
         int originOffset = -(jigsaw.MaxConnectionDist * 2);
-        UtilityBuffers.SetSampleData(PathSetupRetriever, (float3)(CCoord * chunkSize), 1);
-        UtilityBuffers.SetSampleData(StructurePathfinder, (float3)(CCoord * chunkSize), 1);
+        UtilityBuffers.SetSampleData(PathSetupRetriever, (float3)(CCoord * worldChunkSize), 1);
+        UtilityBuffers.SetSampleData(StructurePathfinder, (float3)(CCoord * worldChunkSize), 1);
         PathSetupRetriever.SetInt("numPointsPerAxis", batchSize);
         StructurePathfinder.SetInt("numPointsPerAxis", batchSize);
+        PathSetupRetriever.SetInt("numVoxelsPerChunk", chunkSize);
         PathSetupRetriever.SetInt("batchSize", batchSize);
         StructurePathfinder.SetInt("batchSize", batchSize);
         ComputeBuffer args;
@@ -571,7 +449,7 @@ public static class Generator {
             PathSetupRetriever.GetKernelThreadGroupSizes(kernel, out uint sectionGridThreads, out uint _, out _);
             int numGroupsPerAxis = Mathf.CeilToInt(batchSize / (float)sectionGridThreads);
             PathSetupRetriever.Dispatch(kernel, numGroupsPerAxis, numGroupsPerAxis, numGroupsPerAxis);
-
+            
             kernel = StructurePathfinder.FindKernel("BatchPathfind");
             StructurePathfinder.SetInt("batchIndex", index);
             StructurePathfinder.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
@@ -592,7 +470,6 @@ public static class Generator {
         public int anchorDictCounter;
         public int anchorPathCounter;
         public int finalStructsCounter;
-        public int batchOverlapCounter;
         public int batchPathCounter;
         public int batchSocketCapCounter;
         public int2 countersRange;
@@ -602,7 +479,6 @@ public static class Generator {
         public int socketUsageStart;
         public int anchorPathStart;
         public int pathEndsStart;
-        public int batchOverlapStart;
         public int batchPathStart;
         public int batchSocketCapStart;
         public int batchVistStart;
@@ -618,7 +494,7 @@ public static class Generator {
 
         const int ANCHOR_STRIDE_WORD = 3 + 1 + 1;
         const int ANCHOR_DICT_WORD = 1;
-        const int SOCKET_USAGE_WORD = 1;
+        const int SOCKET_USAGE_WORD = 6;
         const int ANCHOR_PATH_WORD = 3;
         const int PATH_ENDS_WORD = 6;
         const int PATH_INDEX_WORD = 1;
@@ -646,8 +522,7 @@ public static class Generator {
             anchorDictCounter = 0;
             anchorPathCounter = 1;
             finalStructsCounter = 2;
-            batchOverlapCounter = 3;
-            batchPathCounter = batchOverlapCounter + maxBatchesPerChunk;
+            batchPathCounter = finalStructsCounter + maxBatchesPerChunk;
             batchSocketCapCounter = batchPathCounter + maxBatchesPerChunk;
             countersRange = new (anchorDictCounter, batchSocketCapCounter + maxBatchesPerChunk);
 
@@ -666,10 +541,7 @@ public static class Generator {
             pathEndsStart = Mathf.CeilToInt((float)AnchorPathEndInd_W / PATH_ENDS_WORD);
             int PathEndsEndInd_W = (pathEndsStart + maxPathsPerChunk) * PATH_ENDS_WORD;
 
-            batchOverlapStart = Mathf.CeilToInt((float)PathEndsEndInd_W / PATH_INDEX_WORD);
-            int BatchOverlapEndInd_W = (batchOverlapStart + maxBatchesPerChunk * maxPathsPerBatch) * PATH_INDEX_WORD;
-
-            batchPathStart = Mathf.CeilToInt((float)BatchOverlapEndInd_W / PATH_INDEX_WORD);
+            batchPathStart = Mathf.CeilToInt((float)PathEndsEndInd_W / PATH_INDEX_WORD);
             int BatchPathsEndInd_W = (batchPathStart + maxBatchesPerChunk * maxPathsPerBatch) * PATH_INDEX_WORD;
 
             //This one is not mathematically accurate upper bound but an estimate

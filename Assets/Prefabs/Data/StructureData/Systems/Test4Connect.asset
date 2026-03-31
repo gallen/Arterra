@@ -27,7 +27,7 @@ MonoBehaviour:
   Names:
     value:
     - Air
-    - Embers
+    - Bedrock
   map:
     value:
     - data: 0
@@ -1034,17 +1034,7 @@ MonoBehaviour:
     value: []
   Enhancements:
     Entities:
-      value:
-      - Entity: Monolith
-        offsetMin:
-          x: 0
-          y: 2
-          z: 0
-        offsetMax:
-          x: 8
-          y: 6
-          z: 8
-        GenCount: 2
+      value: []
     MapMetaData:
       value: []
   references:

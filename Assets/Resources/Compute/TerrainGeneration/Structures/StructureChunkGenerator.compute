@@ -64,19 +64,20 @@ void CSMain (uint3 id : SV_DispatchThreadID)
 
     settings StructureSettings = _StructureSettings[structureIndex];
     uint3 sizes = StructureSettings.size;
+    float3x3 worldToLocal = transpose(RotationLookupTable[rotation.y][rotation.x][rotation.z]);
 
     //Where in the chunk to start generation
     uint3 chunkOrigin = uint3(max(0, origin));
 
-    int3 xAxis = int3(mul(RotationLookupTable[rotation.y][rotation.x][rotation.z], float3(1, 0, 0)));
+    int3 xAxis = int3(mul(worldToLocal, float3(1, 0, 0)));
     int3 xDir = abs(xAxis);
     bool xFlipped = dot(xAxis, float3(1, 1, 1)) < 0;
 
-    int3 yAxis = int3(mul(RotationLookupTable[rotation.y][rotation.x][rotation.z], float3(0, 1, 0)));
+    int3 yAxis = int3(mul(worldToLocal, float3(0, 1, 0)));
     int3 yDir = abs(yAxis);
     bool yFlipped = dot(yAxis, float3(1, 1, 1)) < 0;
 
-    int3 zAxis = int3(mul(RotationLookupTable[rotation.y][rotation.x][rotation.z], float3(0, 0, 1)));
+    int3 zAxis = int3(mul(worldToLocal, float3(0, 0, 1)));
     int3 zDir = abs(zAxis);
     bool zFlipped = dot(zAxis, float3(1, 1, 1)) < 0;
 

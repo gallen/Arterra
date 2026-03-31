@@ -1,3 +1,5 @@
+#ifndef SOLVE_ANCHOR_ROT
+#define SOLVE_ANCHOR_ROT
 #include "Assets/Resources/Compute/Utility/RotationTables.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/SocketConnector.hlsl"
 
@@ -22,10 +24,24 @@ float3 FaceIdxToDir(uint face) {
     return float3(axis == 0u, axis == 1u, axis == 2u) * sgn;
 }
 
+uint ScoreRotatedPorts(uint expected, uint rotatedPorts)
+{
+    uint matched = countbits(expected & rotatedPorts);
+    if (matched == 0u && expected != 0u)
+        return 0u;
 
-//-1 if no solution, otherwise any such (rotY & 0x3) | ((rotX & 0x3) << 2) | ((rotZ & 0x3) << 4)
-int SolveForRotation(uint index, uint config, uint basePorts) {
-    uint expected = socketUsage[index] & SOCKET_USED_MASK;
+    uint missing = countbits(expected & ~rotatedPorts);
+    uint extra = countbits(rotatedPorts & ~expected);
+    return (matched << 8u) | ((6u - missing) << 4u) | (6u - extra);
+}
+
+
+// Returns the best-scoring rotation for the anchor's requested port mask.
+// score is 0 when the structure contributes no requested ports.
+int SolveForRotation(uint index, uint config, uint basePorts, out uint bestScore) {
+    uint expected = GetSocketUsageMask(index) & SOCKET_USED_MASK;
+    bestScore = 0u;
+    int bestRotation = -1;
 
     uint maxY = HadRandYRot(config) ? 4u : 1u;
     uint maxX = HadRandXRot(config) ? 4u : 1u;
@@ -52,8 +68,16 @@ int SolveForRotation(uint index, uint config, uint basePorts) {
         if (basePorts & SOCKET_MASK_POS_Z) rotatedPorts |= 1u << DirToFaceIdx( rz);
         if (basePorts & SOCKET_MASK_NEG_Z) rotatedPorts |= 1u << DirToFaceIdx(-rz);
 
-        if (rotatedPorts == expected)
-            return int((rotY & 0x3) | ((rotX & 0x3) << 2) | ((rotZ & 0x3) << 4));
+        uint score = ScoreRotatedPorts(expected, rotatedPorts);
+        if (score > bestScore) {
+            bestScore = score;
+            bestRotation = int((rotY & 0x3u) | ((rotX & 0x3u) << 2) | ((rotZ & 0x3u) << 4));
+
+            if (rotatedPorts == expected)
+                break;
+        }
     }
-    return -1;
+
+    return bestRotation;
 }
+#endif

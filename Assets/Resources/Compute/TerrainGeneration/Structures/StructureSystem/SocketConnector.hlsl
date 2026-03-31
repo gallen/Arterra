@@ -1,5 +1,6 @@
 #ifndef STRUCT_SOCKET_CONNECTION
 #define STRUCT_SOCKET_CONNECTION
+#include "Assets/Resources/Compute/Utility/Encodings.hlsl"
 static const uint SOCKET_NEG_X = 0;
 static const uint SOCKET_POS_X = 3;
 static const uint SOCKET_NEG_Y = 1;
@@ -15,35 +16,19 @@ static const uint SOCKET_MASK_NEG_Z = 1u << SOCKET_NEG_Z;
 static const uint SOCKET_MASK_POS_Z = 1u << SOCKET_POS_Z;
 
 static const uint SOCKET_USED_MASK = 0x3Fu;
-static const uint SOCKET_LOCK_BIT  = 0x80000000u;
 
-//high bit -> writeLock, lowest 6 bits -> has '-x,+x,-y,+y,-z,+z' connections
 RWStructuredBuffer<uint> socketUsage;
 uint bSTART_sockets;
 
-void LockSocketUsage(uint index) {
-    uint oldValue;
-    uint newValue;
+inline uint2 GetFaceDirs(uint data) { return uint2(data & 0x7u, (data >> 3u) & 0x7u); }
+inline uint PackFaceDirs(uint2 dirs) { return (dirs.y << 3u) | (dirs.x & 0x7u); }
 
-    [allow_uav_condition]
-    while (true) {
-        oldValue = socketUsage[index + bSTART_sockets];
-        if ((oldValue & SOCKET_LOCK_BIT) != 0u)
-            continue;
-
-        newValue = oldValue | SOCKET_LOCK_BIT;
-
-        uint prev;
-        InterlockedCompareExchange(socketUsage[index + bSTART_sockets], newValue, oldValue, prev);
-        if (prev == oldValue)
-            break;
-    }
+uint EncodePriority(uint distEnc, uint pref) {
+    return (((pref + 1u) & 0x3u) << 29) | ((0x1FFFFFFFu - min(distEnc, 0x1FFFFFFFu)) & 0x1FFFFFFFu);
 }
 
-void UnlockSocketUsage(uint index)
-{
-    uint dummy;
-    InterlockedAnd(socketUsage[index + bSTART_sockets], ~SOCKET_LOCK_BIT, dummy);
+uint SocketUsageIndex(uint anchorIndex, uint face){
+    return bSTART_sockets + anchorIndex * 6u + face;
 }
 
 uint OppositeFace(uint face) {
@@ -54,86 +39,118 @@ uint FaceBit(uint face) {
     return 1u << face;
 }
 
-uint BuildAllowedMask(int3 diff)
+uint AxisToNegFace(uint axis)
+{
+    return axis == 0u ? SOCKET_NEG_X : (axis == 1u ? SOCKET_NEG_Y : SOCKET_NEG_Z);
+}
+
+uint AxisToPosFace(uint axis)
+{
+    return axis == 0u ? SOCKET_POS_X : (axis == 1u ? SOCKET_POS_Y : SOCKET_POS_Z);
+}
+
+uint FaceFromAxisDelta(int delta, uint axis)
+{
+    return delta < 0 ? AxisToNegFace(axis) : AxisToPosFace(axis);
+}
+
+uint GetSocketUsageMask(uint anchorIndex)
 {
     uint mask = 0u;
-
-    if (diff.x >= 0) mask |= SOCKET_MASK_POS_X;
-    if (diff.x <= 0) mask |= SOCKET_MASK_NEG_X;
-
-    if (diff.y >= 0) mask |= SOCKET_MASK_POS_Y;
-    if (diff.y <= 0) mask |= SOCKET_MASK_NEG_Y;
-
-    if (diff.z >= 0) mask |= SOCKET_MASK_POS_Z;
-    if (diff.z <= 0) mask |= SOCKET_MASK_NEG_Z;
-
+    [unroll]
+    for (uint face = 0u; face < 6u; face++) {
+        if (socketUsage[SocketUsageIndex(anchorIndex, face)] != 0u)
+            mask |= FaceBit(face);
+    }
     return mask;
 }
 
-inline uint2 GetFaceDirs(uint data) { return uint2(data & 0x3, (data >> 2) & 0x3); }
-inline uint PackFaceDirs(uint2 dirs) { return (dirs.y << 3u) | dirs.x; }
-
-
-uint TryGetSocketConnection(uint a1, uint a2, int3 diff)
+void SortAxesByMagnitude(int3 delta, out uint3 axes)
 {
-    // Never connect an anchor to itself.
-    if (a1 == a2) return 0u;
+    int3 absDelta = abs(delta);
+    axes = uint3(0u, 1u, 2u);
 
-    // Lock in stable order to avoid deadlock.
-    uint lo = min(a1, a2);
-    uint hi = max(a1, a2);
-
-    LockSocketUsage(lo);
-    LockSocketUsage(hi);
-
-    uint usage1 = socketUsage[a1 + bSTART_sockets];
-    uint usage2 = socketUsage[a2 + bSTART_sockets];
-
-    uint used1 = usage1 & SOCKET_USED_MASK;
-    uint used2 = usage2 & SOCKET_USED_MASK;
-
-    uint allowed1 = BuildAllowedMask(diff) & ~used1;
-    uint allowed2 = BuildAllowedMask(-diff) & ~used2;
-
-    if (allowed1 == 0u || allowed2 == 0u) {
-        UnlockSocketUsage(hi);
-        UnlockSocketUsage(lo);
-        return 0u;
+    if (absDelta[axes.y] > absDelta[axes.x]) {
+        uint tmp = axes.x;
+        axes.x = axes.y;
+        axes.y = tmp;
     }
+    if (absDelta[axes.z] > absDelta[axes.y]) {
+        uint tmp = axes.y;
+        axes.y = axes.z;
+        axes.z = tmp;
+    }
+    if (absDelta[axes.y] > absDelta[axes.x]) {
+        uint tmp = axes.x;
+        axes.x = axes.y;
+        axes.y = tmp;
+    }
+}
 
-    uint chosenA1 = 0u;
-    uint chosenA2 = 0u;
-    bool found = false;
+void TrySetSocketConnection(uint a1, uint a2, int3 start, int3 end)
+{
+    if (a1 == a2)
+        return;
 
-    // Prefer opposite-facing pairs along the strongest available direction.
+    int3 diff1 = end - start;
+    int3 diff2 = -diff1;
+
+    uint dist1 = DistanceEncode(diff1);
+    uint dist2 = DistanceEncode(diff2);
+    uint3 axes;
+    SortAxesByMagnitude(diff1, axes);
+
+    uint pref = 2u;
     [unroll]
-    for (uint f1 = 0u; f1 < 6u; f1++) {
-        uint bit1 = FaceBit(f1);
-        if ((allowed1 & bit1) == 0u) continue;
+    for (uint order = 0u; order < 3u; order++) {
+        uint axis = axes[order];
+        if (diff1[axis] == 0)
+            continue;
 
-        uint f2 = OppositeFace(f1);
-        uint bit2 = FaceBit(f2);
-        if ((allowed2 & bit2) == 0u) continue;
+        uint face1 = FaceFromAxisDelta(diff1[axis], axis);
+        uint face2 = FaceFromAxisDelta(diff2[axis], axis);
+        uint encoded1 = EncodePriority(dist1, pref);
+        uint encoded2 = EncodePriority(dist2, pref);
+        uint prev;
+        InterlockedMax(socketUsage[SocketUsageIndex(a1, face1)], encoded1, prev);
+        InterlockedMax(socketUsage[SocketUsageIndex(a2, face2)], encoded2, prev);
 
-        chosenA1 = f1;
-        chosenA2 = f2;
-        found = true;
-        break;
+        if (pref > 0u)
+            pref--;
     }
+}
 
-    if (!found) {
-        UnlockSocketUsage(hi);
-        UnlockSocketUsage(lo);
+uint TryGetSocketConnection(uint a1, uint a2, int3 start, int3 end) {
+    if (a1 == a2)
         return 0u;
+
+    int3 diff1 = end - start;
+    int3 diff2 = -diff1;
+
+    uint dist1 = DistanceEncode(diff1);
+    uint dist2 = DistanceEncode(diff2);
+    uint3 axes;
+    SortAxesByMagnitude(diff1, axes);
+
+    uint pref = 2u;
+    [unroll]
+    for (uint order = 0u; order < 3u; order++) {
+        uint axis = axes[order];
+        if (diff1[axis] == 0)
+            continue;
+
+        uint face1 = FaceFromAxisDelta(diff1[axis], axis);
+        uint face2 = FaceFromAxisDelta(diff2[axis], axis);
+        uint encoded1 = EncodePriority(dist1, pref);
+        uint encoded2 = EncodePriority(dist2, pref);
+        if (socketUsage[SocketUsageIndex(a1, face1)] == encoded1
+            && socketUsage[SocketUsageIndex(a2, face2)] == encoded2)
+            return PackFaceDirs(uint2(face1, face2));
+
+        if (pref > 0u)
+            pref--;
     }
 
-    // Mark both sockets as used. Keep lock bit intact.
-    socketUsage[a1 + bSTART_sockets] = usage1 | FaceBit(chosenA1);
-    socketUsage[a2 + bSTART_sockets] = usage2 | FaceBit(chosenA2);
-
-    UnlockSocketUsage(hi);
-    UnlockSocketUsage(lo);
-
-    return PackFaceDirs(uint2(chosenA1, chosenA2)); 
+    return 0u;
 }
 #endif

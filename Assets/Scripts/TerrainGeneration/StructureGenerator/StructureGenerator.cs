@@ -23,7 +23,7 @@ public class Creator
     /// of the beginning of the structure information for this chunk.
     /// </summary>
     public uint StructureDataIndex;
-    const int STRUCTURE_STRIDE_WORD = 3 + 1;
+    public const int STRUCTURE_STRIDE_WORD = 3 + 1;
 
     /// <summary>  Releases any intermediate structure information sheld by this instance. Call this to ensure
     /// that no memory is being held by a chunk being disposed. See <seealso cref="StructureDataIndex"/>. </summary>
@@ -85,16 +85,10 @@ public class Creator
     {
         ReleaseStructure();
         //Sample system structures
-        Jigsaw.Generator.PlanStructureSystems(chunkSize, depth, chunkCoord);
-        /*CopyBufferRegion(
-            Jigsaw.Generator.offsets.finalStructsCounter,
-            Jigsaw.Generator.offsets.finalStructsStart,
-            Generator.offsets.structureCounter,
-            Generator.offsets.structureStart,
-            STRUCTURE_STRIDE_WORD
-        );
-        ClearRange(GenerationBuffer, 6, 1);*/
-        ClearRange(GenerationBuffer, 7, 0);
+        if(Jigsaw.Generator.PlanStructureSystems(chunkSize, depth, chunkCoord))
+            ClearRange(GenerationBuffer, 6, 1);
+        else ClearRange(GenerationBuffer, 7, 0);
+
         Generator.SampleStructureLoD(Config.CURRENT.Generation.Structures.value.maxLoD, chunkSize, depth, chunkCoord);
         Generator.IdentifyStructures(offset, IsoLevel);
 

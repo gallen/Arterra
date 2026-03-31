@@ -1,4 +1,5 @@
 #pragma kernel ClearSockets
+#pragma kernel SetSocketConnections
 #pragma kernel ConnectGraph
 
 #include "Assets/Resources/Compute/Utility/Random.hlsl"
@@ -46,13 +47,16 @@ void ClearSockets (uint3 id : SV_DispatchThreadID){
     if (id.x >= counters[bCOUNT_dict]) return;
 
     int rtInd = anchorDict[id.x + bSTART_dict];
-    socketUsage[rtInd + bSTART_sockets] = 0u;
+    [unroll]
+    for (uint face = 0u; face < 6u; face++) {
+        socketUsage[bSTART_sockets + rtInd * 6 + face] = 0u;
+    }
 }
 
 uint csum(uint3 v) { return dot(v, float3(1,1,1));}
 
 [numthreads(numThreads,1,1)]
-void ConnectGraph (uint3 id : SV_DispatchThreadID){
+void SetSocketConnections (uint3 id : SV_DispatchThreadID){
     if (id.x >= counters[bCOUNT_dict]) return;
     
     int searchRad = ceil((float)connectRadius / cellSize);
@@ -65,9 +69,7 @@ void ConnectGraph (uint3 id : SV_DispatchThreadID){
     if (self.system == -1) return;
     sysInfo system = _SystemInfo[self.system];
 
-    rtCoord.x = rtInd % cellsPerChunk;
-    rtCoord.y = (rtInd / cellsPerChunk) % cellsPerChunk;
-    rtCoord.z = (rtInd / (cellsPerChunk * cellsPerChunk)) % cellsPerChunk;
+    rtCoord = coordFromIndex((uint)rtInd);
 
     int3 offset;
     for(offset.x = -searchRad; offset.x <= searchRad; offset.x++) {
@@ -94,7 +96,54 @@ void ConnectGraph (uint3 id : SV_DispatchThreadID){
         int3 wCoordNeighbor = coord * cellSize + base;
         uint seed = Random(wCoordNeighbor) ^ Random(wCoordSelf);
         if (RandomFloat(seed) > system.edgeFrequency) continue;
-        uint connection = TryGetSocketConnection(rtInd, index, diff);
+        TrySetSocketConnection(rtInd, index, self.pos, neighbor.pos);
+    }
+    }
+    }
+}
+
+[numthreads(numThreads,1,1)]
+void ConnectGraph (uint3 id : SV_DispatchThreadID){
+    if (id.x >= counters[bCOUNT_dict]) return;
+    
+    int searchRad = ceil((float)connectRadius / cellSize);
+    int3 base = oCCoord * cellsPerChunk * cellSize + oCellOffset;
+    
+    int3 rtCoord;
+    int rtInd = anchorDict[id.x + bSTART_dict];
+
+    anchor self = anchors[rtInd + bSTART_anchors];
+    if (self.system == -1) return;
+    sysInfo system = _SystemInfo[self.system];
+
+    rtCoord = coordFromIndex((uint)rtInd);
+
+    int3 offset;
+    for(offset.x = -searchRad; offset.x <= searchRad; offset.x++) {
+    for(offset.y = -searchRad; offset.y <= searchRad; offset.y++) {
+    for(offset.z = -searchRad; offset.z <= searchRad; offset.z++) {
+        if (all(offset == 0)) continue;
+        int3 coord = rtCoord + offset;
+        if (any(coord < 0) || any(coord >= numPointsPerAxis)) continue;
+
+        int index = indexFromCoord(coord);
+        anchor neighbor = anchors[index + bSTART_anchors];
+        if (neighbor.system != self.system) continue;
+
+        //To avoid duplicate edges, nodes only consider edges in the positive direction
+        int3 diff = neighbor.pos - self.pos;
+        if (csum(diff) < 0) continue;
+        if (csum(diff) == 0) {
+            //i.e. if the negative coord comes before the positive one
+            if (diff.x < 0 || diff.x == 0 && diff.y < 0)
+                continue;
+        }
+
+        int3 wCoordSelf = rtCoord * cellSize + base;
+        int3 wCoordNeighbor = coord * cellSize + base;
+        uint seed = Random(wCoordNeighbor) ^ Random(wCoordSelf);
+        if (RandomFloat(seed) > system.edgeFrequency) continue;
+        uint connection = TryGetSocketConnection(rtInd, index, self.pos, neighbor.pos);
         if (connection == 0) continue;
 
         int appendInd;

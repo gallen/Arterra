@@ -70,7 +70,7 @@ namespace Arterra.Data.Structure.Jigsaw {
             public Option<List<JigsawConnection>> Transitions;
             public enum Facing : uint {
                 Left = 0, Right = 3,
-                Top = 1, Bottom = 4,
+                Bottom = 1, Top = 4,
                 Back = 2, Forward = 5,
             }
         };

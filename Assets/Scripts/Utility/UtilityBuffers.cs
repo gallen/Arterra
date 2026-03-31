@@ -97,10 +97,8 @@ namespace Arterra.Utils {
         public static void CopyBufferRegion(int sourceCounter, int sourceStart, int destCounter, int destStart, int stride = 1) {
             sourceStart *= stride; destStart *= stride;
 
-            CopyBufferIndirect(GenerationBuffer, TransferBuffer, sourceStart, 1, sourceCounter, stride: stride);
-            CopyCount(GenerationBuffer, TransferBuffer, sourceCounter, 0);
-            CopyBufferIndirect(TransferBuffer, GenerationBuffer, 1, destStart, 0, stride: stride);
-            CopyCount(TransferBuffer, GenerationBuffer, 0, destCounter);
+            CopyBufferIndirect(GenerationBuffer, GenerationBuffer, sourceStart, destStart, sourceCounter, stride: stride);
+            CopyCount(GenerationBuffer, GenerationBuffer, sourceCounter, destCounter);
         }
 
         public static bool CopyBuffer(ComputeBuffer source, ComputeBuffer dest, int readOffset = 0, int writeOffset = 0, int count = 0, int stride = 1) {
@@ -124,7 +122,7 @@ namespace Arterra.Utils {
         }
 
         public static bool CopyBufferIndirect(ComputeBuffer source, ComputeBuffer dest, int readOffset = 0, int writeOffset = 0, int countOffset = 0, int stride = 1) {
-            if (countOffset <= 0) return false;
+            if (countOffset < 0) return false;
             if (source == null || dest == null) return false;
 
             int kernel = indirectCopy.FindKernel("CopyIndirect");

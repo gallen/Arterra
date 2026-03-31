@@ -4,28 +4,22 @@
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/SolveAnchorRotation.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathTypes.hlsl"
 
+#ifndef HAS_STRUCT_SETTINGS
+#define HAS_STRUCT_SETTINGS
 StructuredBuffer<settings> _StructureSettings;
+#endif 
+
 StructuredBuffer<SystemStructure> _SystemStructures;
 StructuredBuffer<Port> _StructurePorts; //6 ports per system structure
 StructuredBuffer<Socket> _StructureSockets;
 StructuredBuffer<Transition> _StructureTransitions;
 
-inline uint PackStctMeta(uint index, uint rotMeta) {
-    settings set = _StructureSettings[index];
-    return rotMeta
-        | ((IsEnhanced(set.config) ? 1u : 0u) << 6)
-        | (index << 7);
-}
-
-
-bool IsInsideBatch(int3 coord)
-{
+bool IsInsideBatch(int3 coord) {
     int3 extent = int3(batchSize, batchSize, batchSize);
     return !any(coord < 0) && !any(coord >= extent);
 }
 
-float3 GetSocketBasePosition(uint3 size, float2 uv, uint baseFace)
-{
+float3 GetSocketBasePosition(uint3 size, float2 uv, uint baseFace) {
     float align = baseFace < 3u ? 0.0 : 1.0;
 
     if (baseFace == 0u || baseFace == 3u)
@@ -77,13 +71,11 @@ int3 GetSocketOffset(uint sysStructIndex, uint rotMeta, uint objectFace)
     return int3(mul(rotMatrix, baseSocket) - newOrigin);
 }
 
-int3 GetSocketObjectPosition(int3 origin, uint sysStructIndex, uint rotMeta, uint objectFace)
-{
+int3 GetSocketObjectPosition(int3 origin, uint sysStructIndex, uint rotMeta, uint objectFace) {
     return origin + GetSocketOffset(sysStructIndex, rotMeta, objectFace);
 }
 
-int3 GetOriginFromSocket(int3 socketObj, uint sysStructIndex, uint rotMeta, uint objectFace)
-{
+int3 GetOriginFromSocket(int3 socketObj, uint sysStructIndex, uint rotMeta, uint objectFace) {
     return socketObj - GetSocketOffset(sysStructIndex, rotMeta, objectFace);
 }
 

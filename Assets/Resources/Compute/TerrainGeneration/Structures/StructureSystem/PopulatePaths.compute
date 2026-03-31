@@ -35,6 +35,14 @@ StructuredBuffer<uint2> _StructureIndexes;
 StructuredBuffer<checkData> _StructureChecks;
 uint batchIndex;
 
+bool TrySetVisited(uint index, uint pathId, uint visited) {
+    int oldId;
+    InterlockedMax(batchVisit[index].id, pathId, oldId);
+    if (oldId >= pathId) return false;
+    batchVisit[index].visited = visited;
+    return true;
+}
+
 
 bool VerifyChecks(uint structureIndex, uint3 rot, float3 origin)
 {
@@ -78,15 +86,13 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
 
         if (!IsInsideBatch(localCorner))
             return false;
-        if (batchVisit[indexFromCoord(localCorner) + bSTART_visited].id != pathIndex)
-            return false;
     }
 
     return true;
 }
 
 int3 ObjectToWorldSpace(int3 objectPos) {
-    return objectPos + oCCoord * batchesPerChunk * batchSize;
+    return objectPos + (int3)sOffset;
 }
 
 groupshared uint2 gFrontier[2][MAX_BATCH_FRONTIER];
@@ -106,7 +112,7 @@ void AppendNextNode(uint2 packedNode)
     InterlockedAdd(gNextCount, 1u, slot);
     //Basically ignore overflow... may need to resolve this
     if (slot >= MAX_BATCH_FRONTIER) return;
-    gFrontier[gUseFrontier][slot] = packedNode;
+    gFrontier[(gUseFrontier + 1u) % 2u][slot] = packedNode;
 }
 
 /*
@@ -196,7 +202,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                 continue;
 
             int currentFlat = indexFromCoord(currentLocal) + bSTART_visited;
-            if (batchVisit[currentFlat].id != gPathIndex)
+            if (batchVisit[currentFlat].id > gPathIndex)
                 continue;
 
             int3 currentObjectPos = currentLocal + batchOffset;
@@ -221,7 +227,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                     continue;
 
                 int outgoingFlat = indexFromCoord(outgoingLocal) + bSTART_visited;
-                if (batchVisit[outgoingFlat].id != gPathIndex)
+                if (batchVisit[outgoingFlat].id > gPathIndex)
                     continue;
 
                 //Ensure we are moving closer to end to prevent backwards cycles
@@ -234,7 +240,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                 if (all(outgoingObjectPos == gEndObjectPos)) {
                     if (CanConnectStructures(currentSysStructIndex, currentRotMeta, outgoingObjectFace,
                             gEndSysStructIndex, gEndRotMeta, gEndObjectFace)) {
-                        batchVisit[outgoingFlat].visited = connectionVisitedValue;
+                        TrySetVisited(outgoingFlat, gPathIndex, connectionVisitedValue);
                         gSolved = 1u;
                     }
                     continue;
@@ -272,7 +278,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                                 continue;
 
                             if (batchVisit[outgoingFlat].visited == INVALID_VISITED) {
-                                batchVisit[outgoingFlat].visited = connectionVisitedValue;
+                                TrySetVisited(outgoingFlat, gPathIndex, connectionVisitedValue);
                             } else {
                                 int3 outgoingWorldPos = ObjectToWorldSpace(outgoingObjectPos);
                                 uint seed = Random(outgoingWorldPos + int3(
@@ -280,7 +286,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                                     (int)nextSysStructIndex,
                                     (int)currentRotMeta));
                                 if (RandomFloat(seed) < outgoingSocket.connectChance)
-                                    batchVisit[outgoingFlat].visited = connectionVisitedValue;
+                                    TrySetVisited(outgoingFlat, gPathIndex, connectionVisitedValue);
                             }
 
                             AppendNextNode(MakeFrontierNode(nextSysStructIndex, nextRotMeta, outgoingLocal, requiredObjectFace));
