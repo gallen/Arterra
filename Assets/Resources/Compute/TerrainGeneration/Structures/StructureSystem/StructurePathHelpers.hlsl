@@ -10,9 +10,10 @@ StructuredBuffer<settings> _StructureSettings;
 #endif 
 
 StructuredBuffer<SystemStructure> _SystemStructures;
-StructuredBuffer<Port> _StructurePorts; //6 ports per system structure
-StructuredBuffer<Socket> _StructureSockets;
-StructuredBuffer<Transition> _StructureTransitions;
+StructuredBuffer<StructurePort> _StructurePorts;
+StructuredBuffer<PortSocketOption> _PortSocketOptions;
+StructuredBuffer<SocketPortTransitions> _SocketPortAtlas;
+StructuredBuffer<TransDeltas> _TransitionDeltasAtlas;
 
 bool IsInsideBatch(int3 coord) {
     int3 extent = int3(batchSize, batchSize, batchSize);
@@ -55,12 +56,33 @@ uint GetRotatedPortMask(uint basePorts, uint rotMeta)
     return rotatedMask;
 }
 
+bool HasRandYRot(uint config) { return (config & 0x1u) != 0u; }
+bool HasRandXRot(uint config) { return (config & 0x2u) != 0u; }
+bool HasRandZRot(uint config) { return (config & 0x4u) != 0u; }
+
+uint GetBasePortIndex(uint sysStructIndex, uint baseFace)
+{
+    return sysStructIndex * 6u + baseFace;
+}
+
+uint GetSocketAtlasIndex(uint portIndex, int socketSystemId, uint inputFace)
+{
+    uint sysStructIndex = portIndex / 6u;
+    return _SystemStructures[sysStructIndex].socketAtlasStart + (uint)socketSystemId * 6u + inputFace;
+}
+
+uint GetPortBaseFace(uint portIndex)
+{
+    return portIndex % 6u;
+}
+
 int3 GetSocketOffset(uint sysStructIndex, uint rotMeta, uint objectFace)
 {
     SystemStructure systemStructure = _SystemStructures[sysStructIndex];
     settings structureSettings = _StructureSettings[systemStructure.structureIndex];
     uint baseFace = GetBaseFaceFromObjectFace(objectFace, rotMeta);
-    Port port = _StructurePorts[sysStructIndex * 6u + baseFace];
+    uint portIndex = GetBasePortIndex(sysStructIndex, baseFace);
+    StructurePort port = _StructurePorts[portIndex];
 
     uint3 rot = GetRot(rotMeta);
     float3x3 rotMatrix = RotationLookupTable[rot.y][rot.x][rot.z];
@@ -79,24 +101,37 @@ int3 GetOriginFromSocket(int3 socketObj, uint sysStructIndex, uint rotMeta, uint
     return socketObj - GetSocketOffset(sysStructIndex, rotMeta, objectFace);
 }
 
-
-bool CanConnectStructures(uint currentSysStructIndex, uint currentRotMeta, uint currentObjectFace,
-    uint nextSysStructIndex, uint nextRotMeta, uint nextObjectFace)
+uint GetSocketFaceAtWorldPos(int3 socketWorldPos, int3 originWorld, uint sysStructIndex, uint rotMeta)
 {
-    uint currentBaseFace = GetBaseFaceFromObjectFace(currentObjectFace, currentRotMeta);
-    Port port = _StructurePorts[currentSysStructIndex * 6u + currentBaseFace];
-    uint nextBaseFace = GetBaseFaceFromObjectFace(nextObjectFace, nextRotMeta);
+    [unroll]
+    for (uint face = 0u; face < 6u; face++) {
+        if (all(GetSocketObjectPosition(originWorld, sysStructIndex, rotMeta, face) == socketWorldPos))
+            return face;
+    }
+
+    return INVALID_PATH;
+}
+
+
+bool CanConnectPorts(uint currentPortIndex, uint currentObjectFace, uint nextPortIndex, uint nextObjectFace)
+{
+    if (nextObjectFace != (currentObjectFace + 3u) % 6u)
+        return false;
+
+    StructurePort currentPort = _StructurePorts[currentPortIndex];
+    StructurePort nextPort = _StructurePorts[nextPortIndex];
+    if (nextPort.socketSystemId < 0)
+        return false;
 
     [loop][fastopt]
-    for (uint socketIndex = port.sockets.x; socketIndex < port.sockets.y; socketIndex++) {
-        Socket socket = _StructureSockets[socketIndex];
-        for (uint transitionIndex = socket.transitions.x; transitionIndex < socket.transitions.y; transitionIndex++) {
-            Transition transition = _StructureTransitions[transitionIndex];
-            if (transition.structure != nextSysStructIndex)
-                continue;
-            if ((transition.oppSocketFace & FaceBit(nextBaseFace)) != 0u)
-                return true;
-        }
+    for (int optionIndex = currentPort.sockets.x; optionIndex < currentPort.sockets.y; optionIndex++) {
+        PortSocketOption option = _PortSocketOptions[optionIndex];
+        if (option.socketSystemId != nextPort.socketSystemId)
+            continue;
+
+        SocketPortTransitions bucket = _SocketPortAtlas[GetSocketAtlasIndex(currentPortIndex, option.socketSystemId, OppositeFace(currentObjectFace))];
+        if (bucket.range.x < bucket.range.y)
+            return true;
     }
 
     return false;

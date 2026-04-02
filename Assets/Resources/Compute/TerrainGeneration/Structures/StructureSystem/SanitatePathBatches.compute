@@ -112,7 +112,6 @@ int3 GetPartialEnd(pathEnds value) {
     return IsPartialStart(value) ? value.end : value.start;
 }
 
-
 [numthreads(numThreads,1,1)]
 void GetRealEndpoints (uint3 id : SV_DispatchThreadID){
     if (id.x >= counters[bCOUNT_paths]) return;
@@ -205,10 +204,11 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
         int pInd = IsPartialStart(ep) ? path.y : path.x;
         int dir = IsPartialStart(ep) ? dirs.y : dirs.x;
         uint2 stct = UnpackStct(anchors[pInd + bSTART_anchors].stct);
+        uint portIndex = GetBasePortIndex(stct.y, GetBaseFaceFromObjectFace((uint)dir, stct.x));
 
         InterlockedAdd(counters[bSTART_capCounts + containedFlat], 1, containedSlot);
         SocketCaps[bSTART_caps + containedFlat * bSTEP_batch + containedSlot] =
-            MakeSocketCap(stct.y, stct.x, GetPartialEnd(ep), dir, id.x);
+            MakeSocketCap(portIndex, GetPartialEnd(ep), (uint)dir, (int)id.x);
     } else {
         InterlockedAdd(counters[bSTART_batchCounts + containedFlat], 1, containedSlot);
         batchLines[bSTART_batch + containedFlat * bSTEP_batch + containedSlot] = (int)id.x;

@@ -17,10 +17,6 @@ using Arterra.GamePlay.Interaction;
 using Arterra.Engine.Audio;
 using Arterra.GamePlay.UI;
 using Arterra.Engine.Rendering;
-using Unity.Mathematics;
-using Arterra.Data.Structure.Jigsaw;
-using Arterra.Engine.Terrain.Structure.Jigsaw;
-using System.Net.Sockets;
 
 namespace Arterra.Engine.Terrain{
 /// <summary>  The factory protocol for the collective game system. This
@@ -557,97 +553,6 @@ public static class GenerationPreset
             checksBuffer?.Release();
             settingsBuffer?.Release();
             systems.Release();
-        }
-
-        public struct StructSystem {
-            ComputeBuffer StructureSystems;
-            ComputeBuffer SystemStructures;
-            ComputeBuffer StructurePorts;
-            ComputeBuffer StructureSockets;
-            ComputeBuffer SocketTransitions;
-            
-            public void Initialize() {
-                List<JigsawSystem> SystemDictionary = Config.CURRENT.Generation.Structures.value.SystemDictionary.Reg;
-
-                List<StructSystemInfo> systems = new ();
-                List<JigsawSystem.SystemStructure> structures = new ();
-                List<JigsawSystem.Port> ports = new ();
-                List<JigsawSystem.Socket> sockets = new ();
-                List<JigsawSystem.Transition> transitions = new ();
-                Dictionary<string, Dictionary<int, uint>> TransitionMap = new ();
-                Dictionary<string, uint2> TransitionRange = new ();
-
-                for(int i = 0; i < SystemDictionary.Count; i++) {
-                    JigsawSystem system = SystemDictionary[i];
-                    List<JigsawSystem.JigsawStructure> sysStructs = system.Structures.value;
-                    if (sysStructs == null || sysStructs.Count == 0) continue;
-                    uint2 systemStructRange; systemStructRange.x = (uint)structures.Count();
-
-                    TransitionMap.Clear();
-                    TransitionRange.Clear();
-                    for(int k = 0; k < sysStructs.Count; k++) {
-                        sysStructs[k].CollectSocketNames(k, ref TransitionMap);
-                    } foreach(KeyValuePair<string, Dictionary<int, uint>> SocketName in TransitionMap) {
-                        Dictionary<int, uint> Structures = SocketName.Value;
-                        TransitionRange.Add(SocketName.Key, new ((uint)transitions.Count(), (uint)(transitions.Count() + Structures.Count())));
-                        foreach(KeyValuePair<int, uint> stct in Structures) {
-                            transitions.Add(new JigsawSystem.Transition {
-                                Structure = stct.Key + (int)systemStructRange.x,
-                                AllowedOppositeFaces = stct.Value
-                            });
-                        }
-                    }
-                    
-                    for(int j = 0; j < sysStructs.Count; j++) {
-                        sysStructs[j].SerializeStructure(
-                            system, TransitionRange,
-                            out JigsawSystem.SystemStructure st,
-                            ref ports,
-                            ref sockets
-                        );
-                        structures.Add(st);
-                    }
-                    systemStructRange.y = (uint)structures.Count();
-                    systems.Add(new StructSystemInfo {
-                        edgeFrequency = system.edgeFrequency,
-                        structures = systemStructRange
-                    });
-                }
-
-                if (systems.Count == 0) return;
-                StructureSystems = new ComputeBuffer(SystemDictionary.Count, StructSystemInfo.size, ComputeBufferType.Structured); //By doubling stride, we compress the prefix sums
-                SystemStructures = new ComputeBuffer(structures.Count, JigsawSystem.SystemStructure.size, ComputeBufferType.Structured);
-                StructurePorts = new ComputeBuffer(ports.Count, JigsawSystem.Port.size, ComputeBufferType.Structured);
-                StructureSockets = new ComputeBuffer(sockets.Count, JigsawSystem.Socket.size, ComputeBufferType.Structured);
-                SocketTransitions = new ComputeBuffer(transitions.Count, JigsawSystem.Transition.size, ComputeBufferType.Structured);
-
-                StructureSystems.SetData(systems);
-                SystemStructures.SetData(structures);
-                StructurePorts.SetData(ports);
-                StructureSockets.SetData(sockets);
-                SocketTransitions.SetData(transitions);  
-
-                Shader.SetGlobalBuffer("_SystemInfo", StructureSystems);
-                Shader.SetGlobalBuffer("_SystemStructures", SystemStructures);
-                Shader.SetGlobalBuffer("_StructurePorts", StructurePorts);
-                Shader.SetGlobalBuffer("_StructureSockets", StructureSockets);
-                Shader.SetGlobalBuffer("_StructureTransitions", SocketTransitions); 
-            }
-
-            public struct StructSystemInfo {
-                public static int size => sizeof(float) + 2 * sizeof(uint);
-                public float edgeFrequency;
-                public uint2 structures;
-            };
-
-            public void Release()
-            {
-                StructureSystems?.Release();
-                SystemStructures?.Release();
-                StructurePorts?.Release();
-                StructureSockets?.Release();
-                SocketTransitions?.Release();
-            }
         }
     }
     

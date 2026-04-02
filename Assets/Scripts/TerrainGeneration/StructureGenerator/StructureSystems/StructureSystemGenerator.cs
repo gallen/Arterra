@@ -100,6 +100,18 @@ public static class Generator {
         StructurePathfinder = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/PopulatePaths");
         PathSetupRetriever = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/ComputeBatchSetup");
     }
+
+    private static int CalculateBatchAxisCount(int totalAxisSize, int batchSize, int overlapSize) {
+        if (totalAxisSize <= batchSize)
+            return 1;
+
+        int batchStride = batchSize - overlapSize;
+        if (batchStride <= 0)
+            throw new InvalidOperationException($"Invalid structure-system batch stride: batchSize={batchSize}, overlapSize={overlapSize}");
+
+        return Mathf.CeilToInt((totalAxisSize - batchSize) / (float)batchStride) + 1;
+    }
+
     public static void Initialize() {
         offsets = new SSystemOffsets();
         Configuration.Quality.Terrain rSettings = Config.CURRENT.Quality.Terrain.value;
@@ -215,6 +227,11 @@ public static class Generator {
         StructurePathfinder.SetInt("bSTART_anchors", offsets.anchorsStart);
         StructurePathfinder.SetInt("bSTART_visited", offsets.batchVistStart);
         Structure.Generator.SetStructIDSettings(StructurePathfinder);
+        
+        StructurePathfinder.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
+        StructurePathfinder.SetBuffer(kernel, "counters1", UtilityBuffers.GenerationBuffer);
+        StructurePathfinder.SetInt("bCOUNT_struct", offsets.finalStructsCounter);
+        StructurePathfinder.SetInt("bSTART_struct", offsets.finalStructsStart);
 
         kernel = PathSetupRetriever.FindKernel("SectionGrid");
         PathSetupRetriever.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
@@ -310,6 +327,43 @@ public static class Generator {
         );
     }
 
+    private static int CalculateBatchEntryCapacity(int batchSize) {
+        int cellsPerAxis = Mathf.CeilToInt((float)batchSize / jigsaw.CellSize);
+        return cellsPerAxis * cellsPerAxis * cellsPerAxis * 6;
+    }
+
+    private static void LogBatchCounterSaturation(string label, int counterStart, int batchesPerAxis, int batchCapacity, int3 chunkCoord, int depth) {
+        int totalBatches = batchesPerAxis * batchesPerAxis * batchesPerAxis;
+        int[] counts = new int[totalBatches];
+        ReadBufferRegion(counterStart, totalBatches, counts);
+
+        int saturatedCount = 0;
+        int maxCount = 0;
+        int maxIndex = -1;
+        for (int index = 0; index < totalBatches; index++) {
+            int count = counts[index];
+            if (count >= batchCapacity)
+                saturatedCount++;
+            if (count > maxCount) {
+                maxCount = count;
+                maxIndex = index;
+            }
+        }
+
+        if (saturatedCount <= 0)
+            return;
+
+        int batchArea = batchesPerAxis * batchesPerAxis;
+        int3 maxCoord = new int3(
+            maxIndex / batchArea,
+            (maxIndex / batchesPerAxis) % batchesPerAxis,
+            maxIndex % batchesPerAxis
+        );
+        Debug.LogWarning(
+            $"Jigsaw {label} saturation: chunk={chunkCoord}, depth={depth}, saturatedBatches={saturatedCount}/{totalBatches}, capacity={batchCapacity}, maxCount={maxCount} at batch=({maxCoord.x}, {maxCoord.y}, {maxCoord.z})"
+        );
+    }
+
     private static void LogCopiedStructureRegion() {
         int sourceCount = ReadCounterValue(offsets.finalStructsCounter);
         int destCount = ReadCounterValue(Structure.Generator.offsets.structureCounter);
@@ -401,7 +455,8 @@ public static class Generator {
 
         int batchSize = math.min(chunkSize, jigsaw.MaxBatchSize);
         int batchStride = batchSize - jigsaw.MaxConnectionDist;
-        int batchesPerAxis = (chunkSize - batchSize) / batchStride + 1;
+        int batchesPerAxis = CalculateBatchAxisCount(chunkSize, batchSize, jigsaw.MaxConnectionDist);
+        int batchCapacity = CalculateBatchEntryCapacity(batchSize);
 
         int kernel = SanitateBatches.FindKernel("SelectAnchorPieces");
         ComputeBuffer args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorDictCounter, kernel);
@@ -418,6 +473,10 @@ public static class Generator {
         kernel = SanitateBatches.FindKernel("FilterPathBatches");
         args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorPathCounter, kernel);
         SanitateBatches.DispatchIndirect(kernel, args);
+
+    #if UNITY_EDITOR || DEVELOPMENT_BUILD
+        //LogBatchCounterSaturation("path", offsets.batchPathCounter, batchesPerAxis, batchCapacity, CCoord, depth);
+    #endif
     }
 
     public static void PopulatePathsWithStructures(int chunkSize, int depth, int3 CCoord) {
@@ -426,23 +485,27 @@ public static class Generator {
 
         int batchSize = math.min(chunkSize, jigsaw.MaxBatchSize);
         int batchStride = batchSize - jigsaw.MaxConnectionDist;
-        int batchesPerAxis = (chunkSize - batchSize) / batchStride + 1;
+        int batchesPerAxis = CalculateBatchAxisCount(chunkSize, batchSize, jigsaw.MaxConnectionDist);
+        int batchCapacity = CalculateBatchEntryCapacity(batchSize);
         int originOffset = -(jigsaw.MaxConnectionDist * 2);
         UtilityBuffers.SetSampleData(PathSetupRetriever, (float3)(CCoord * worldChunkSize), 1);
         UtilityBuffers.SetSampleData(StructurePathfinder, (float3)(CCoord * worldChunkSize), 1);
         PathSetupRetriever.SetInt("numPointsPerAxis", batchSize);
         StructurePathfinder.SetInt("numPointsPerAxis", batchSize);
         PathSetupRetriever.SetInt("numVoxelsPerChunk", chunkSize);
+        StructurePathfinder.SetInt("numVoxelsPerChunk", chunkSize);
         PathSetupRetriever.SetInt("batchSize", batchSize);
         StructurePathfinder.SetInt("batchSize", batchSize);
         ComputeBuffer args;
+        //int totalPaths = ReadCounterValue(offsets.anchorPathCounter);
+        //int batchPaths = 0;
 
         for (int x = 0; x < batchesPerAxis; x++) {
         for (int y = 0; y < batchesPerAxis; y++) {
         for (int z = 0; z < batchesPerAxis; z++) {
             int index = CustomUtility.indexFromCoord(x,y,z, batchesPerAxis);
             int3 batchOffset = new int3(x,y,z) * batchStride + originOffset;
-
+            
             PathSetupRetriever.SetInt("batchIndex", index);
             PathSetupRetriever.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
             int kernel = PathSetupRetriever.FindKernel("SectionGrid");
@@ -450,12 +513,13 @@ public static class Generator {
             int numGroupsPerAxis = Mathf.CeilToInt(batchSize / (float)sectionGridThreads);
             PathSetupRetriever.Dispatch(kernel, numGroupsPerAxis, numGroupsPerAxis, numGroupsPerAxis);
             
-            kernel = StructurePathfinder.FindKernel("BatchPathfind");
+            //batchPaths += ReadCounterValue(offsets.batchPathCounter + index);
+            /*kernel = StructurePathfinder.FindKernel("BatchPathfind");
             StructurePathfinder.SetInt("batchIndex", index);
             StructurePathfinder.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
             args = UtilityBuffers.CountToArgs(StructurePathfinder, UtilityBuffers.GenerationBuffer, offsets.batchPathCounter + index, kernel);
-            StructurePathfinder.DispatchIndirect(kernel, args);
-
+            StructurePathfinder.DispatchIndirect(kernel, args);*/
+            
             kernel = PathSetupRetriever.FindKernel("BacktrackGridPath");
             args = UtilityBuffers.CountToArgs(PathSetupRetriever, UtilityBuffers.GenerationBuffer, offsets.batchPathCounter + index, kernel);
             PathSetupRetriever.DispatchIndirect(kernel, args);
@@ -464,6 +528,12 @@ public static class Generator {
             args = UtilityBuffers.CountToArgs(PathSetupRetriever, UtilityBuffers.GenerationBuffer, offsets.batchSocketCapCounter + index, kernel);
             PathSetupRetriever.DispatchIndirect(kernel, args);
         }}}
+
+#if UNITY_EDITOR || DEVELOPMENT_BUILD
+        //LogBatchCounterSaturation("cap", offsets.batchSocketCapCounter, batchesPerAxis, batchCapacity, CCoord, depth);
+#endif
+
+        //Debug.Log($"TotalPaths {totalPaths}, Batch Paths {batchPaths}");
     }
 
     public struct SSystemOffsets : BufferOffsets {
@@ -507,7 +577,7 @@ public static class Generator {
         //... this buffer is sectioned way too much lol
         public SSystemOffsets(int maxChunkAxis, int maxPathLength, int batchSize, int cellSize, int bufferStart) {
             maxChunkAxis += maxPathLength * 4;
-            int maxBatchAxis = (maxChunkAxis - batchSize) / (batchSize - maxPathLength) + 1;
+            int maxBatchAxis = CalculateBatchAxisCount(maxChunkAxis, batchSize, maxPathLength);
             int maxCellsPerChunkAxis = Mathf.CeilToInt((float)maxChunkAxis / cellSize);
             int maxCellsPerBatchAxis = Mathf.CeilToInt((float)batchSize / cellSize);
 
