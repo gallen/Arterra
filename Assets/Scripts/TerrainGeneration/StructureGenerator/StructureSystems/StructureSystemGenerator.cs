@@ -268,7 +268,7 @@ public static class Generator {
         PathSetupRetriever.SetBuffer(kernel, "SocketCaps", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
         Structure.Generator.SetStructIDSettings(PathSetupRetriever);
-        Shader.SetGlobalInt("_StructTestDot", Config.CURRENT.Generation.Structures.value.StructureDictionary.RetrieveIndex("Dot"));
+        Shader.SetGlobalInt("_StructTestDot", Config.CURRENT.Generation.Structures.value.   StructureDictionary.RetrieveIndex("Dot"));
         Shader.SetGlobalInt("_StructTestDot1", Config.CURRENT.Generation.Structures.value.StructureDictionary.RetrieveIndex("Dot1"));
     }
 
@@ -308,11 +308,6 @@ public static class Generator {
         UtilityBuffers.CopyCount(UtilityBuffers.GenerationBuffer, UtilityBuffers.TransferBuffer, counterOffset, 0);
         UtilityBuffers.TransferBuffer.GetData(_counterReadback, 0, 0, 1);
         return _counterReadback[0];
-    }
-
-    private static void Require(bool condition, string message) {
-        if (condition) return;
-        throw new InvalidOperationException($"StructureSystem sanity check failed: {message}");
     }
 
     private static void ReadBufferRegion(int start, int length, int[] destination) {
@@ -498,6 +493,7 @@ public static class Generator {
         StructurePathfinder.SetInt("batchSize", batchSize);
         ComputeBuffer args;
         //int totalPaths = ReadCounterValue(offsets.anchorPathCounter);
+        //int totalAnchors = ReadCounterValue(offsets.anchorDictCounter);
         //int batchPaths = 0;
 
         for (int x = 0; x < batchesPerAxis; x++) {
@@ -514,11 +510,12 @@ public static class Generator {
             PathSetupRetriever.Dispatch(kernel, numGroupsPerAxis, numGroupsPerAxis, numGroupsPerAxis);
             
             //batchPaths += ReadCounterValue(offsets.batchPathCounter + index);
-            /*kernel = StructurePathfinder.FindKernel("BatchPathfind");
+            kernel = StructurePathfinder.FindKernel("BatchPathfind");
             StructurePathfinder.SetInt("batchIndex", index);
             StructurePathfinder.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
-            args = UtilityBuffers.CountToArgs(StructurePathfinder, UtilityBuffers.GenerationBuffer, offsets.batchPathCounter + index, kernel);
-            StructurePathfinder.DispatchIndirect(kernel, args);*/
+            // BatchPathfind consumes one whole thread group per path and uses groupId.x as the path slot.
+            args = UtilityBuffers.CountToArgs(1, UtilityBuffers.GenerationBuffer, offsets.batchPathCounter + index);
+            StructurePathfinder.DispatchIndirect(kernel, args);
             
             kernel = PathSetupRetriever.FindKernel("BacktrackGridPath");
             args = UtilityBuffers.CountToArgs(PathSetupRetriever, UtilityBuffers.GenerationBuffer, offsets.batchPathCounter + index, kernel);
@@ -533,7 +530,7 @@ public static class Generator {
         //LogBatchCounterSaturation("cap", offsets.batchSocketCapCounter, batchesPerAxis, batchCapacity, CCoord, depth);
 #endif
 
-        //Debug.Log($"TotalPaths {totalPaths}, Batch Paths {batchPaths}");
+        //Debug.Log($"TotalPaths {totalPaths}, Batch Paths {batchPaths}, Total Anchors {totalAnchors}");
     }
 
     public struct SSystemOffsets : BufferOffsets {

@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using UnityEngine;
 using Arterra.Configuration;
+using Arterra.Engine.Terrain;
 
 namespace Arterra.Utils {
     public static class UtilityBuffers {
@@ -94,11 +95,52 @@ namespace Arterra.Utils {
         /// <param name="destCounter">The offset in 4byte words of the destination counter</param>
         /// <param name="destStart">The offset in stride units of the start of the destination</param>
         /// <param name="stride">The size of one counting unit in 4byte units</param>
-        public static void CopyBufferRegion(int sourceCounter, int sourceStart, int destCounter, int destStart, int stride = 1) {
+        /// <param name="overlaps">Whether or not the destination and source can overlap and are in the same buffer</param>
+        public static void CopyBufferRegion(int sourceCounter, int sourceStart, int destCounter, int destStart, int stride = 1, bool overlaps = true) {
             sourceStart *= stride; destStart *= stride;
 
-            CopyBufferIndirect(GenerationBuffer, GenerationBuffer, sourceStart, destStart, sourceCounter, stride: stride);
-            CopyCount(GenerationBuffer, GenerationBuffer, sourceCounter, destCounter);
+            if (overlaps) {
+                uint tempAddr = GenerationPreset.memoryHandle.AllocateMemory(GenerationBuffer, stride, sourceCounter);
+                ComputeBuffer tempStorage = GenerationPreset.memoryHandle.GetBlockBuffer(tempAddr);
+                GraphicsBuffer addressDict = GenerationPreset.memoryHandle.Address;
+
+                CopyIndirectToStorage(tempStorage, addressDict, tempAddr, sourceStart, sourceCounter, stride);
+                CopyIndirectFromStorage(tempStorage, addressDict, tempAddr, destStart, sourceCounter, stride);
+                CopyCount(GenerationBuffer, GenerationBuffer, sourceCounter, destCounter);
+                GenerationPreset.memoryHandle.ReleaseMemory(tempAddr);
+            } else {
+                CopyBufferIndirect(GenerationBuffer, GenerationBuffer, sourceStart, destStart, sourceCounter, stride: stride);
+                CopyCount(GenerationBuffer, GenerationBuffer, sourceCounter, destCounter);
+            }
+        }
+
+        private static void CopyIndirectToStorage(ComputeBuffer destStorage, GraphicsBuffer addressDict, uint addrIndex, int readOffset, int countOffset, int stride) {
+            int kernel = indirectCopy.FindKernel("CopyToStorage");
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.Source, GenerationBuffer);
+            indirectCopy.SetInt(ShaderIDProps.ReadOffset, readOffset);
+            indirectCopy.SetInt(ShaderIDProps.Count, countOffset);
+            indirectCopy.SetInt(ShaderIDProps.Stride, stride);
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.DestMemory, destStorage);
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.AddressDict, addressDict);
+            indirectCopy.SetInt(ShaderIDProps.AddressIndex, (int)addrIndex);
+
+            ComputeBuffer args = CountToArgs(indirectCopy, GenerationBuffer, countOffset, kernel: kernel);
+            indirectCopy.DispatchIndirect(kernel, args);
+        }
+
+        private static void CopyIndirectFromStorage(ComputeBuffer sourceStorage, GraphicsBuffer addressDict, uint addrIndex, int writeOffset, int countOffset, int stride) {
+            int kernel = indirectCopy.FindKernel("CopyFromStorage");
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.Source, GenerationBuffer);
+            indirectCopy.SetInt(ShaderIDProps.Count, countOffset);
+            indirectCopy.SetInt(ShaderIDProps.Stride, stride);
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.SourceMemory, sourceStorage);
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.AddressDict, addressDict);
+            indirectCopy.SetInt(ShaderIDProps.AddressIndex, (int)addrIndex);
+            indirectCopy.SetBuffer(kernel, ShaderIDProps.Destination, GenerationBuffer);
+            indirectCopy.SetInt(ShaderIDProps.WriteOffset, writeOffset);
+
+            ComputeBuffer args = CountToArgs(indirectCopy, GenerationBuffer, countOffset, kernel: kernel);
+            indirectCopy.DispatchIndirect(kernel, args);
         }
 
         public static bool CopyBuffer(ComputeBuffer source, ComputeBuffer dest, int readOffset = 0, int writeOffset = 0, int count = 0, int stride = 1) {

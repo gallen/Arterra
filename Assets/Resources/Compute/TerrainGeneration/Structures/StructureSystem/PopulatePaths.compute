@@ -6,7 +6,11 @@
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathHelpers.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/AppendStructure.hlsl"
 
-const static int threadGroupSize = 32;
+#ifndef PATH_PROGRESS_SLACK
+#define PATH_PROGRESS_SLACK 6.0f
+#endif
+
+const static int threadGroupSize = 512;
 
 //numPointsPerAxis = batchSize
 int batchesPerChunk;
@@ -35,6 +39,12 @@ RWStructuredBuffer<PathNode> batchVisit;
 StructuredBuffer<uint2> _StructureIndexes;
 StructuredBuffer<checkData> _StructureChecks;
 uint batchIndex;
+
+uint ProgressToBits(float progress)
+{
+    return asuint(max(progress, 0.0f));
+}
+
 
 bool TrySetVisited(uint index, int pathId, int visited) {
     int oldId;
@@ -71,9 +81,6 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
     settings structureSettings = _StructureSettings[systemStructure.structureIndex];
     uint3 rot = GetRot(rotMeta);
 
-    if (!VerifyChecks(systemStructure.structureIndex, rot, (float3)origin))
-        return false;
-
     float3x3 rotMatrix = RotationLookupTable[rot.y][rot.x][rot.z];
     int3 span = max(int3(abs(mul(rotMatrix, (float3)structureSettings.size))), int3(1, 1, 1));
     int3 farCorner = max(span - 1, int3(0, 0, 0));
@@ -88,6 +95,9 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
         if (!IsInsideBatch(localCorner))
             return false;
     }
+
+    if (!VerifyChecks(systemStructure.structureIndex, rot, (float3)origin))
+        return false;
 
     return true;
 }
@@ -104,6 +114,10 @@ groupshared uint gSolved;
 groupshared int gPathIndex;
 groupshared uint gEndPortIndex;
 groupshared uint gEndObjectFace;
+groupshared uint gBestProgressBits;
+groupshared uint gHasProgressAxis;
+groupshared int3 gStartObjectPos;
+groupshared float3 gPathDir;
 groupshared int3 gEndObjectPos;
 
 void AppendNextNode(uint2 packedNode)
@@ -134,6 +148,7 @@ Process:
 */
 
 uint _StructTestDot;
+uint _StructTestDot1;
 
 [numthreads(threadGroupSize,1,1)]
 void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
@@ -153,11 +168,22 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
         gNextCount = 0u;
         gUseFrontier = 0u;
         gSolved = 0u;
+        gBestProgressBits = 0u;
+        gHasProgressAxis = 0u;
+        gPathDir = 0.0;
 
         if (startAnchor.stct != -1 && endAnchor.stct != -1) {
             uint2 startStct = UnpackStct((uint)startAnchor.stct);
             uint2 endStct = UnpackStct((uint)endAnchor.stct);
+            gStartObjectPos = endData.start;
             gEndObjectPos = endData.end;
+
+            float3 pathDelta = (float3)(gEndObjectPos - gStartObjectPos);
+            float pathLengthSq = dot(pathDelta, pathDelta);
+            if (pathLengthSq > 0.0001f) {
+                gPathDir = pathDelta * rsqrt(pathLengthSq);
+                gHasProgressAxis = 1u;
+            }
 
             uint startRotMeta = startStct.x;
             uint startSysStructIndex = startStct.y;
@@ -178,9 +204,19 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                     gFrontierCount = 1u;
                 }
             }
+
+            /*structureData stDat;
+            stDat.structurePos = endData.end;
+            stDat.meta = PackStctMeta(_StructTestDot, 0);
+            AppendStructure(stDat);
+
+            stDat.structurePos = endData.start;
+            stDat.meta = PackStctMeta(_StructTestDot, 0);
+            AppendStructure(stDat);*/
         }
     }
     GroupMemoryBarrierWithGroupSync();
+    [loop]
     for (uint step = 0u; step < MAX_BATCH_STEPS; step++) {
         bool processFrontier = gFrontierCount > 0u && gSolved == 0u;
 
@@ -210,7 +246,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
             //stDat.structurePos = currentObjectPos;
             //stDat.meta = PackStctMeta(_StructTestDot, 0);
             //AppendStructure(stDat);
-
+            
             float currentEndDistSq = dot((float3)(gEndObjectPos - currentObjectPos), (float3)(gEndObjectPos - currentObjectPos));
             StructurePort currentPort = _StructurePorts[currentPortIndex];
             int optionCount = currentPort.sockets.y - currentPort.sockets.x;
@@ -238,15 +274,16 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
             if (selectedCandidate.range.x >= selectedCandidate.range.y)
                 continue;
 
-            for (int transitionIndex = selectedCandidate.range.x;
-                transitionIndex < selectedCandidate.range.y && gSolved == 0u;
-                transitionIndex++) {
+            uint transitionCount = (uint)(selectedCandidate.range.y - selectedCandidate.range.x);
+            uint transitionsToCheck = min(transitionCount, MAX_TRANSITIONS_PER_NODE);
+            uint transitionStartOffset = transitionCount <= transitionsToCheck ? 0u : (baseSeed % transitionCount);
+
+            for (uint transitionOffset = 0u;
+                transitionOffset < transitionsToCheck && gSolved == 0u;
+                transitionOffset++) {
+                uint transitionIndex = selectedCandidate.range.x + ((transitionStartOffset + transitionOffset) % transitionCount);
                 TransDeltas transition = _TransitionDeltasAtlas[transitionIndex];
                 uint2 nextMeta = UnpackStct((uint)transition.structMeta);
-                int3 originWorld = currentObjectPos + transition.originDelta;
-                if (!VerifyPathBounds(gPathIndex, nextMeta.y, nextMeta.x, originWorld))
-                    continue;
-
                 int3 outgoingObjectPos = currentObjectPos + transition.deltaPosition;
                 int3 outgoingLocal = outgoingObjectPos - batchOffset;
                 if (!IsInsideBatch(outgoingLocal))
@@ -262,8 +299,23 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                 if (outgoingEndDistSq >= currentEndDistSq)
                     continue;
 
+                float outgoingProgress = 0.0f;
+                if (PATH_PROGRESS_SLACK >= 0.0f && gHasProgressAxis != 0u) {
+                    outgoingProgress = max(dot((float3)(outgoingObjectPos - gStartObjectPos), gPathDir), 0.0f);
+                    float bestProgress = asfloat(gBestProgressBits);
+                    if (outgoingProgress + PATH_PROGRESS_SLACK < bestProgress)
+                        continue;
+                }
+
+                int3 originWorld = currentObjectPos + transition.originDelta;
+                if (!VerifyPathBounds(gPathIndex, nextMeta.y, nextMeta.x, originWorld))
+                    continue;
+
                 if (!TrySetVisited(outgoingFlat, gPathIndex, transitionIndex))
                     continue;
+
+                if (PATH_PROGRESS_SLACK >= 0.0f && gHasProgressAxis != 0u)
+                    InterlockedMax(gBestProgressBits, ProgressToBits(outgoingProgress));
 
                 uint nextObjectFace = GetObjectFaceFromBaseFace(GetPortBaseFace((uint)transition.nextPort), nextMeta.x);
                 AppendNextNode(MakeFrontierNode(outgoingLocal, (uint)transition.nextPort, nextObjectFace));
