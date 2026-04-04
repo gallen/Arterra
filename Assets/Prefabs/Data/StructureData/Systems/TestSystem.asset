@@ -175,7 +175,7 @@ MonoBehaviour:
             value:
             - TargetName: Lines
               chance: 0.5
-  edgeFrequency: 0.25
+  edgeFrequency: 0.1
   references:
     version: 2
     RefIds: []

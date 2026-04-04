@@ -1,3 +1,5 @@
+#pragma kernel InitBins
+#pragma kernel BuildBinClosest
 #pragma kernel SectionGrid
 
 /*
@@ -44,6 +46,108 @@ const static int numThreads = 8;
 RWStructuredBuffer<PathNode> batchVisit;
 
 uint bSTART_visited;
+
+struct BinLineNode {
+    int prev;
+    int pathId;
+};
+
+static const int NO_LINES = -1;
+static const int3 NO_ENDS_COORD = int3(-32768, -32768, -32768);
+
+uint bCOUNT_paths;
+uint bSTART_endpts;
+uint bCOUNT_binList;
+uint bSTART_binHeads;
+uint bSTART_binClosest;
+uint bSTART_binList;
+
+int binSize;
+int numBinsPerAxis;
+int binListCapacity;
+int3 batchOffset;
+
+RWStructuredBuffer<int> counters;
+StructuredBuffer<pathEnds> endPoints;
+RWStructuredBuffer<int> binHeads;
+RWStructuredBuffer<int> binClosest;
+StructuredBuffer<BinLineNode> binList;
+
+bool IsNoEnds(pathEnds value) {
+    return all(value.start == NO_ENDS_COORD) && all(value.end == NO_ENDS_COORD);
+}
+
+bool IsPartialEnds(pathEnds value) {
+    return all(value.start == NO_ENDS_COORD) != all(value.end == NO_ENDS_COORD);
+}
+
+int3 GetPartialEnd(pathEnds value) {
+    return all(value.start == NO_ENDS_COORD) ? value.end : value.start;
+}
+
+float DistanceSqPointSegment(float3 p, float3 a, float3 b) {
+    float3 ab = b - a;
+    float denom = dot(ab, ab);
+    float t = denom > 0.0f ? dot(p - a, ab) / denom : 0.0f;
+    t = clamp(t, 0.0f, 1.0f);
+    float3 closest = a + ab * t;
+    float3 d = p - closest;
+    return dot(d, d);
+}
+
+[numthreads(numThreads, numThreads, numThreads)]
+void InitBins(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= numBinsPerAxis))
+        return;
+
+    uint binIndex = indexFromCoordManual(id, (uint)numBinsPerAxis);
+    binHeads[bSTART_binHeads + binIndex] = NO_LINES;
+    binClosest[bSTART_binClosest + binIndex] = NO_LINES;
+
+    if (all(id == 0))
+        counters[bCOUNT_binList] = 0;
+}
+//
+[numthreads(numThreads, numThreads, numThreads)]
+void BuildBinClosest(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= numBinsPerAxis))
+        return;
+
+    uint binIndex = indexFromCoordManual(id, (uint)numBinsPerAxis);
+    float3 binCenter = (float3)(id * (uint)binSize) + (float3)(binSize * 0.5f) + (float3)oCellOffset;
+
+    int pathCount = counters[bCOUNT_paths];
+    float bestDist = 3.4e38f;
+    int bestId = NO_LINES;
+
+    [loop]
+    for (int i = 0; i < pathCount; i++) {
+        pathEnds ep = endPoints[bSTART_endpts + i];
+        if (IsNoEnds(ep))
+            continue;
+
+        float3 a;
+        float3 b;
+        if (IsPartialEnds(ep)) {
+            float3 p = (float3)GetPartialEnd(ep);
+            a = p;
+            b = p;
+        } else {
+            a = (float3)ep.start;
+            b = (float3)ep.end;
+        }
+
+        float distSq = DistanceSqPointSegment(binCenter, a, b);
+        if (distSq < bestDist) {
+            bestDist = distSq;
+            bestId = i;
+        }
+    }
+
+    binClosest[bSTART_binClosest + binIndex] = bestId;
+}
 /* For each grid entry in the grid, look through overlapLines to determine which lines
 overlap in the batch, and then for each point (pos = batchOffset + id), determine the
 closest line segment and set id to index of that path. */
@@ -52,8 +156,50 @@ void SectionGrid(uint3 id : SV_DispatchThreadID)
 {
     if (any(id >= numPointsPerAxis))
         return;
+
+    int3 worldPos = (int3)id + batchOffset;
+    int3 localCoord = worldPos - oCellOffset;
+    int3 binCoord = clamp(localCoord / binSize, (int3)0, (int3)(numBinsPerAxis - 1));
+    uint binIndex = indexFromCoordManual((uint3)binCoord, (uint)numBinsPerAxis);
+
+    int head = binHeads[bSTART_binHeads + binIndex];
+    int bestId = NO_LINES;
+    float bestDist = 3.4e38f;
+    int steps = 0;
+    int maxSteps = binListCapacity;
+
+    [loop]
+    while (head != NO_LINES && steps < maxSteps) {
+        BinLineNode node = binList[bSTART_binList + head];
+        pathEnds ep = endPoints[bSTART_endpts + node.pathId];
+        if (!IsNoEnds(ep)) {
+            float3 a;
+            float3 b;
+            if (IsPartialEnds(ep)) {
+                float3 p = (float3)GetPartialEnd(ep);
+                a = p;
+                b = p;
+            } else {
+                a = (float3)ep.start;
+                b = (float3)ep.end;
+            }
+
+            float distSq = DistanceSqPointSegment((float3)worldPos, a, b);
+            if (distSq < bestDist) {
+                bestDist = distSq;
+                bestId = node.pathId;
+            }
+        }
+
+        head = node.prev;
+        steps++;
+    }
+
+    if (bestId == NO_LINES)
+        bestId = binClosest[bSTART_binClosest + binIndex];
+
     PathNode node;
-    node.id = -1;
+    node.id = bestId;
     node.visited = INVALID_VISITED;
     batchVisit[indexFromCoord(id) + bSTART_visited] = node;
 }

@@ -125,7 +125,7 @@ public static class Generator {
         int cellsPerChunk = rSettings.mapChunkSize / jigsaw.CellSize;
 
         int maxChunkSize = rSettings.mapChunkSize * (1 << structures.maxLoD);
-        offsets = new SSystemOffsets(maxChunkSize, jigsaw.MaxConnectionDist, jigsaw.MaxBatchSize, jigsaw.CellSize, 0);
+        offsets = new SSystemOffsets(maxChunkSize, jigsaw.MaxConnectionDist, jigsaw.MaxBatchSize, jigsaw.CellSize, jigsaw.PathColoringBinSize, 0);
 
         int kernel = AnchorSampler.FindKernel("SamplePoints");
         AnchorSampler.SetBuffer(kernel, "anchors", UtilityBuffers.GenerationBuffer);
@@ -207,12 +207,17 @@ public static class Generator {
         SanitateBatches.SetBuffer(kernel, "overlapLines", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "batchLines", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "SocketCaps", UtilityBuffers.GenerationBuffer);
+        SanitateBatches.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
+        SanitateBatches.SetBuffer(kernel, "binList", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetInt("oCellOffset", originOffset);
         SanitateBatches.SetInt("bSTEP_batch", batchStep);
         SanitateBatches.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
         SanitateBatches.SetInt("bSTART_capCounts", offsets.batchSocketCapCounter);
         SanitateBatches.SetInt("bSTART_batch", offsets.batchPathStart);
         SanitateBatches.SetInt("bSTART_caps", offsets.batchSocketCapStart);
+        SanitateBatches.SetInt("bCOUNT_binList", offsets.binListCounter);
+        SanitateBatches.SetInt("bSTART_binHeads", offsets.binHeadsStart);
+        SanitateBatches.SetInt("bSTART_binList", offsets.binListStart);
 
         kernel = StructurePathfinder.FindKernel("BatchPathfind");
         StructurePathfinder.SetBuffer(kernel, "overlapLines", UtilityBuffers.GenerationBuffer);
@@ -240,7 +245,29 @@ public static class Generator {
 
         kernel = ComputeBatchSetup.FindKernel("SectionGrid");
         ComputeBatchSetup.SetBuffer(kernel, "batchVisit", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "binClosest", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "binList", UtilityBuffers.GenerationBuffer);
         ComputeBatchSetup.SetInt("bSTART_visited", offsets.batchVistStart);
+        ComputeBatchSetup.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
+        ComputeBatchSetup.SetInt("bSTART_endpts", offsets.pathEndsStart);
+        ComputeBatchSetup.SetInt("bCOUNT_binList", offsets.binListCounter);
+        ComputeBatchSetup.SetInt("bSTART_binHeads", offsets.binHeadsStart);
+        ComputeBatchSetup.SetInt("bSTART_binClosest", offsets.binClosestStart);
+        ComputeBatchSetup.SetInt("bSTART_binList", offsets.binListStart);
+        ComputeBatchSetup.SetInt("oCellOffset", originOffset);
+
+        kernel = ComputeBatchSetup.FindKernel("InitBins");
+        ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "binClosest", UtilityBuffers.GenerationBuffer);
+
+        kernel = ComputeBatchSetup.FindKernel("BuildBinClosest");
+        ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetBuffer(kernel, "binClosest", UtilityBuffers.GenerationBuffer);
 
         kernel = PathSetupRetriever.FindKernel("BacktrackGridPath");
         PathSetupRetriever.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
@@ -405,6 +432,12 @@ public static class Generator {
         int batchStride = batchSize - jigsaw.MaxConnectionDist;
         int batchesPerAxis = CalculateBatchAxisCount(chunkSize, batchSize, jigsaw.MaxConnectionDist);
         int batchCapacity = CalculateBatchEntryCapacity(batchSize);
+        int binSize = jigsaw.PathColoringBinSize;
+        int numBinsPerAxis = Mathf.CeilToInt(chunkSize / (float)binSize);
+        int maxCellsPerChunkAxis = Mathf.CeilToInt((float)chunkSize / jigsaw.CellSize);
+        int maxCellsPerChunk = maxCellsPerChunkAxis * maxCellsPerChunkAxis * maxCellsPerChunkAxis;
+        int maxPathsPerChunk = maxCellsPerChunk * 6;
+        int binListCapacity = maxPathsPerChunk * 3;
 
         int kernel = SanitateBatches.FindKernel("SelectAnchorPieces");
         ComputeBuffer args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorDictCounter, kernel);
@@ -417,10 +450,28 @@ public static class Generator {
         SanitateBatches.SetInt("batchSize", batchSize);
         SanitateBatches.SetInt("numPointsPerAxis", batchesPerAxis);
         SanitateBatches.SetInt("numVoxelsPerChunk", chunkSize);
+        SanitateBatches.SetInt("binSize", binSize);
+        SanitateBatches.SetInt("numBinsPerAxis", numBinsPerAxis);
+        SanitateBatches.SetInt("binListCapacity", binListCapacity);
+
+        ComputeBatchSetup.SetInt("numVoxelsPerChunk", chunkSize);
+        ComputeBatchSetup.SetInt("binSize", binSize);
+        ComputeBatchSetup.SetInt("numBinsPerAxis", numBinsPerAxis);
+        ComputeBatchSetup.SetInt("binListCapacity", binListCapacity);
+
+        kernel = ComputeBatchSetup.FindKernel("InitBins");
+        ComputeBatchSetup.GetKernelThreadGroupSizes(kernel, out uint binThreads, out uint _, out _);
+        int binGroupsPerAxis = Mathf.CeilToInt(numBinsPerAxis / (float)binThreads);
+        ComputeBatchSetup.Dispatch(kernel, binGroupsPerAxis, binGroupsPerAxis, binGroupsPerAxis);
 
         kernel = SanitateBatches.FindKernel("FilterPathBatches");
         args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorPathCounter, kernel);
         SanitateBatches.DispatchIndirect(kernel, args);
+
+        kernel = ComputeBatchSetup.FindKernel("BuildBinClosest");
+        ComputeBatchSetup.GetKernelThreadGroupSizes(kernel, out binThreads, out _, out _);
+        binGroupsPerAxis = Mathf.CeilToInt(numBinsPerAxis / (float)binThreads);
+        ComputeBatchSetup.Dispatch(kernel, binGroupsPerAxis, binGroupsPerAxis, binGroupsPerAxis);
 
     #if UNITY_EDITOR || DEVELOPMENT_BUILD
         //LogBatchCounterSaturation("path", offsets.batchPathCounter, batchesPerAxis, batchCapacity, CCoord, depth);
@@ -436,14 +487,25 @@ public static class Generator {
         int batchesPerAxis = CalculateBatchAxisCount(chunkSize, batchSize, jigsaw.MaxConnectionDist);
         int batchCapacity = CalculateBatchEntryCapacity(batchSize);
         int originOffset = -(jigsaw.MaxConnectionDist * 2);
+        int binSize = jigsaw.PathColoringBinSize;
+        int numBinsPerAxis = Mathf.CeilToInt(chunkSize / (float)binSize);
+        int maxCellsPerChunkAxis = Mathf.CeilToInt((float)chunkSize / jigsaw.CellSize);
+        int maxCellsPerChunk = maxCellsPerChunkAxis * maxCellsPerChunkAxis * maxCellsPerChunkAxis;
+        int maxPathsPerChunk = maxCellsPerChunk * 6;
+        int binListCapacity = maxPathsPerChunk * 3;
         UtilityBuffers.SetSampleData(PathSetupRetriever, (float3)(CCoord * chunkSize), 1);
         UtilityBuffers.SetSampleData(StructurePathfinder, (float3)(CCoord * chunkSize), 1);
         PathSetupRetriever.SetInt("numPointsPerAxis", batchSize);
         StructurePathfinder.SetInt("numPointsPerAxis", batchSize);
+        ComputeBatchSetup.SetInt("numPointsPerAxis", batchSize);
         PathSetupRetriever.SetInt("numVoxelsPerChunk", chunkSize);
         StructurePathfinder.SetInt("numVoxelsPerChunk", chunkSize);
+        ComputeBatchSetup.SetInt("numVoxelsPerChunk", chunkSize);
         PathSetupRetriever.SetInt("batchSize", batchSize);
         StructurePathfinder.SetInt("batchSize", batchSize);
+        ComputeBatchSetup.SetInt("binSize", binSize);
+        ComputeBatchSetup.SetInt("numBinsPerAxis", numBinsPerAxis);
+        ComputeBatchSetup.SetInt("binListCapacity", binListCapacity);
         ComputeBuffer args;
         //int totalPaths = ReadCounterValue(offsets.anchorPathCounter);
         //int totalAnchors = ReadCounterValue(offsets.anchorDictCounter);
@@ -458,6 +520,7 @@ public static class Generator {
             int kernel = ComputeBatchSetup.FindKernel("SectionGrid");
             ComputeBatchSetup.GetKernelThreadGroupSizes(kernel, out uint sectionGridThreads, out uint _, out _);
             int numGroupsPerAxis = Mathf.CeilToInt(batchSize / (float)sectionGridThreads);
+            ComputeBatchSetup.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
             ComputeBatchSetup.Dispatch(kernel, numGroupsPerAxis, numGroupsPerAxis, numGroupsPerAxis);
             
             //batchPaths += ReadCounterValue(offsets.batchPathCounter + index);
@@ -493,6 +556,7 @@ public static class Generator {
         public int finalStructsCounter;
         public int batchPathCounter;
         public int batchSocketCapCounter;
+        public int binListCounter;
         public int2 countersRange;
 
         public int anchorsStart;
@@ -504,6 +568,9 @@ public static class Generator {
         public int batchPathStart;
         public int batchSocketCapStart;
         public int batchVistStart;
+        public int binHeadsStart;
+        public int binClosestStart;
+        public int binListStart;
         public int finalStructsStart;
 
         private int offsetStart; private int offsetEnd;
@@ -523,16 +590,20 @@ public static class Generator {
         const int PATH_INDEX_WORD = 1;
         const int STRUCT_SOCKET_WORD = 3;
         const int VISITED_NODE_WORD = 2;
+        const int BIN_HEAD_WORD = 1;
+        const int BIN_CLOSEST_WORD = 1;
+        const int BIN_LIST_NODE_WORD = 2;
 
         const int GEN_STRUCT_WORD = 4;
         const int AVG_STRUCTS_PER_PATH = 3;
 
         //... this buffer is sectioned way too much lol
-        public SSystemOffsets(int maxChunkAxis, int maxPathLength, int batchSize, int cellSize, int bufferStart) {
+        public SSystemOffsets(int maxChunkAxis, int maxPathLength, int batchSize, int cellSize, int binSize, int bufferStart) {
             maxChunkAxis += maxPathLength * 4;
             int maxBatchAxis = CalculateBatchAxisCount(maxChunkAxis, batchSize, maxPathLength);
             int maxCellsPerChunkAxis = Mathf.CeilToInt((float)maxChunkAxis / cellSize);
             int maxCellsPerBatchAxis = Mathf.CeilToInt((float)batchSize / cellSize);
+            int maxBinsPerAxis = Mathf.CeilToInt((float)maxChunkAxis / binSize);
 
             int maxPointsPerBatch = batchSize * batchSize * batchSize;
             int maxBatchesPerChunk = maxBatchAxis * maxBatchAxis * maxBatchAxis;
@@ -540,6 +611,8 @@ public static class Generator {
             int maxCellsPerBatch = maxCellsPerBatchAxis * maxCellsPerBatchAxis * maxCellsPerBatchAxis;
             int maxPathsPerBatch = maxCellsPerBatch * 6;
             int maxPathsPerChunk = maxCellsPerChunk * 6;
+            int maxBinsPerChunk = maxBinsPerAxis * maxBinsPerAxis * maxBinsPerAxis;
+            int maxBinListNodes = maxPathsPerChunk * 3;
 
             this.offsetStart = bufferStart;
             anchorDictCounter = 0;
@@ -547,7 +620,8 @@ public static class Generator {
             finalStructsCounter = 2;
             batchPathCounter = finalStructsCounter + maxBatchesPerChunk;
             batchSocketCapCounter = batchPathCounter + maxBatchesPerChunk;
-            countersRange = new (anchorDictCounter, batchSocketCapCounter + maxBatchesPerChunk);
+            binListCounter = batchSocketCapCounter + maxBatchesPerChunk;
+            countersRange = new (anchorDictCounter, binListCounter + 1);
 
             anchorsStart = Mathf.CeilToInt((float)countersRange.y / ANCHOR_STRIDE_WORD);
             int AnchorEndInd_W = (anchorsStart + maxCellsPerChunk) * ANCHOR_STRIDE_WORD;
@@ -577,7 +651,16 @@ public static class Generator {
             batchVistStart = Mathf.CeilToInt((float)BatchSocketEndInd_W / VISITED_NODE_WORD); 
             int BatchVisitedEndInd_W = (batchVistStart + maxPointsPerBatch) * VISITED_NODE_WORD;
 
-            finalStructsStart = Mathf.CeilToInt((float)BatchVisitedEndInd_W / GEN_STRUCT_WORD);
+            binHeadsStart = Mathf.CeilToInt((float)BatchVisitedEndInd_W / BIN_HEAD_WORD);
+            int BinHeadsEndInd_W = (binHeadsStart + maxBinsPerChunk) * BIN_HEAD_WORD;
+
+            binClosestStart = Mathf.CeilToInt((float)BinHeadsEndInd_W / BIN_CLOSEST_WORD);
+            int BinClosestEndInd_W = (binClosestStart + maxBinsPerChunk) * BIN_CLOSEST_WORD;
+
+            binListStart = Mathf.CeilToInt((float)BinClosestEndInd_W / BIN_LIST_NODE_WORD);
+            int BinListEndInd_W = (binListStart + maxBinListNodes) * BIN_LIST_NODE_WORD;
+
+            finalStructsStart = Mathf.CeilToInt((float)BinListEndInd_W / GEN_STRUCT_WORD);
             offsetEnd = (finalStructsStart + maxPathsPerChunk * AVG_STRUCTS_PER_PATH) * GEN_STRUCT_WORD;
         }
     }

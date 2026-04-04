@@ -151,6 +151,45 @@ RWStructuredBuffer<uint3> SocketCaps;
 uint bSTART_capCounts; 
 uint bSTART_caps; 
 
+struct BinLineNode {
+    int prev;
+    int pathId;
+};
+
+uint bCOUNT_binList;
+uint bSTART_binHeads;
+uint bSTART_binList;
+int binSize;
+int numBinsPerAxis;
+int binListCapacity;
+
+RWStructuredBuffer<int> binHeads;
+RWStructuredBuffer<BinLineNode> binList;
+
+int CeilDiv(int a, int b) {
+    return a >= 0 ? (a + b - 1) / b : a / b;
+}
+
+void AddPathToBin(int binIndex, int pathId) {
+    int newIndex;
+    InterlockedAdd(counters[bCOUNT_binList], 1, newIndex);
+    if (newIndex >= binListCapacity)
+        return;
+
+    int oldValue = binHeads[bSTART_binHeads + binIndex];
+    int replaced;
+    [loop]
+    while (true) {
+        InterlockedCompareExchange(binHeads[bSTART_binHeads + binIndex], oldValue, newIndex, replaced);
+        if (replaced == oldValue)
+            break;
+        oldValue = replaced;
+    }
+
+    binList[bSTART_binList + newIndex].prev = oldValue;
+    binList[bSTART_binList + newIndex].pathId = pathId;
+}
+
 /*
 Batchsize refers to the side length of a single batch.
 Each batch has an overlap of connectRadius with its neighbor.
@@ -212,5 +251,29 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
     } else {
         InterlockedAdd(counters[bSTART_batchCounts + containedFlat], 1, containedSlot);
         batchLines[bSTART_batch + containedFlat * bSTEP_batch + containedSlot] = (int)id.x;
+    }
+
+    int3 minLocal = clamp(minPt, (int3)0, (int3)(numVoxelsPerChunk - 1));
+    int3 maxLocal = clamp(maxPt, (int3)0, (int3)(numVoxelsPerChunk - 1));
+    int3 binMin = int3(
+        CeilDiv(minLocal.x - 2 * binSize + 1, binSize),
+        CeilDiv(minLocal.y - 2 * binSize + 1, binSize),
+        CeilDiv(minLocal.z - 2 * binSize + 1, binSize)
+    );
+    int3 binMax = int3(
+        (maxLocal.x + binSize) / binSize,
+        (maxLocal.y + binSize) / binSize,
+        (maxLocal.z + binSize) / binSize
+    );
+    binMin = clamp(binMin, (int3)0, (int3)(numBinsPerAxis - 1));
+    binMax = clamp(binMax, (int3)0, (int3)(numBinsPerAxis - 1));
+
+    for (int x = binMin.x; x <= binMax.x; x++) {
+        for (int y = binMin.y; y <= binMax.y; y++) {
+            for (int z = binMin.z; z <= binMax.z; z++) {
+                int binIndex = (int)indexFromCoordManual((uint)x, (uint)y, (uint)z, (uint)numBinsPerAxis);
+                AddPathToBin(binIndex, (int)id.x);
+            }
+        }
     }
 }

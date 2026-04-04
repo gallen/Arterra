@@ -7,7 +7,6 @@
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathHelpers.hlsl"
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/AppendStructure.hlsl"
 
-const static int numThreads1 = 8;
 const static int numThreads2 = 16;
 const static int numThreads3 = 64;
 const static uint MAX_CAP_LENGTH = 6u;
@@ -29,7 +28,7 @@ uint bSTART_capCounts;
 uint bSTART_caps; 
 uint bSTART_paths;
 uint bSTART_anchors;
-RWStructuredBuffer<uint3> SocketCaps; //format: same as frontire node in PopulatePaths.compute (will be capped in another pass)
+RWStructuredBuffer<uint3> SocketCaps; //format: same as frontire node in PopulatePaths.compute(will be capped in another pass)
 StructuredBuffer<uint3> anchorPaths;
 StructuredBuffer<anchor> anchors;
 StructuredBuffer<int3> pathMeet;
@@ -55,7 +54,7 @@ bool BacktrackSegment(int pathId, int3 cur, int3 end, bool fromEnd, uint startCa
 
     if (IsInsideBatch(cur)) {
         PathNode startVisit = batchVisit[indexFromCoord(cur) + bSTART_visited];
-        if (startVisit.visited != INVALID_VISITED && startVisit.id == pathId && VisitedFromEnd(startVisit.visited) == fromEnd) {
+        if (startVisit.id == pathId && startVisit.visited != INVALID_VISITED && VisitedFromEnd(startVisit.visited) == fromEnd) {
             uint startTransitionIndex = VisitedTransitionIndex(startVisit.visited);
             TransDeltas startTransition = _TransitionDeltasAtlas[startTransitionIndex];
             uint2 startStct = UnpackStct((uint)startTransition.structMeta);
@@ -73,10 +72,9 @@ bool BacktrackSegment(int pathId, int3 cur, int3 end, bool fromEnd, uint startCa
 
         int index = indexFromCoord(cur);
         PathNode visit = batchVisit[index + bSTART_visited];
-
-        if (visit.visited == INVALID_VISITED)
-            break;
         if (visit.id != pathId)
+            break;
+        if (visit.visited == INVALID_VISITED)
             break;
         if (VisitedFromEnd(visit.visited) != fromEnd)
             break;

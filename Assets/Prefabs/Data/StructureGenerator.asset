@@ -57,6 +57,7 @@ MonoBehaviour:
       coarseSSystemNoise: CaveCoarse
       fineSSystemNoise: CaveFine
       MaxSystemLoD: 2
+      PathColoringBinSize: 8
   StructureChecksPerChunk: 1000
   LoDFalloff: 3
   maxLoD: 3

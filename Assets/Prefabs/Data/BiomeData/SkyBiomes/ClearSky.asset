@@ -62,7 +62,7 @@ MonoBehaviour:
         value:
         - value:
             StructureSystem: 3
-            genSize: 0.368
+            genSize: 0.244
             genShape: 0.63
             frequency: 1
             height: 0

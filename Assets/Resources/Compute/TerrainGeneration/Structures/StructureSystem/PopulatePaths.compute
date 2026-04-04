@@ -7,12 +7,12 @@
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/AppendStructure.hlsl"
 
 #ifndef PATH_PROGRESS_SLACK
-#define PATH_PROGRESS_SLACK 6.0f
+#define PATH_PROGRESS_SLACK 4.0f
 #endif
 
 const static int threadGroupSize = 512;
 
-//numPointsPerAxis = batchSize
+//numPointsPerAxis = batchSize 
 int batchesPerChunk;
 int3 batchOffset;
 int3 oCCoord;
@@ -49,11 +49,14 @@ uint ProgressToBits(float progress)
 
 
 bool TrySetVisited(uint index, int pathId, uint visitedTransition, bool fromEnd) {
-    int oldId;
-    InterlockedMax(batchVisit[index].id, pathId, oldId);
-    if (oldId >= pathId) return false;
-    batchVisit[index].visited = EncodeVisited(visitedTransition, fromEnd);
-    return true;
+    if (batchVisit[index].id != pathId)
+        return false;
+
+    int expected = INVALID_VISITED;
+    int desired = EncodeVisited(visitedTransition, fromEnd);
+    int old;
+    InterlockedCompareExchange(batchVisit[index].visited, expected, desired, old);
+    return old == expected;
 }
 
 
@@ -276,7 +279,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                 continue;
 
             int currentFlat = indexFromCoord(currentLocal) + bSTART_visited;
-            if (batchVisit[currentFlat].id > gPathIndex)
+            if (batchVisit[currentFlat].id != gPathIndex)
                 continue;
 
             int3 currentObjectPos = currentLocal + batchOffset;
@@ -337,7 +340,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                     continue;
 
                 int outgoingFlat = indexFromCoord(outgoingLocal) + bSTART_visited;
-                if (batchVisit[outgoingFlat].id > gPathIndex)
+                if (batchVisit[outgoingFlat].id != gPathIndex)
                     continue;
                 if (batchVisit[outgoingFlat].visited != INVALID_VISITED) {
                     PathNode existing = batchVisit[outgoingFlat];
