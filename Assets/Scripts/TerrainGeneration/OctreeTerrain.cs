@@ -164,6 +164,7 @@ namespace Arterra.Engine.Terrain{
 
             Gizmos.color = Color.white;
             Gizmos.DrawWireCube(CPUMapManager.GSToWS(node.origin + (float3)node.size / 2), (float3)node.size * s.lerpScale);
+            //Debug.Log(node.origin/s.mapChunkSize);
             Indicators.OnDrawGizmos();
         }
 #endif

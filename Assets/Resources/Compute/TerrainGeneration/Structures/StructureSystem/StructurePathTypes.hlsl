@@ -2,11 +2,12 @@
 #define STRUCTURE_PATH_TYPES
 
 const static uint MAX_TRANSITIONS_PER_NODE = 24u;
-static const uint MAX_BATCH_FRONTIER = 1024u;
-static const uint MAX_BATCH_STEPS = 12u;
+static const uint MAX_BATCH_FRONTIER = 864u;
+static const uint MAX_BATCH_STEPS = 8u;
 static const int INVALID_VISITED = -1;
 static const uint FRONTIER_COORD_MASK = 0x1FFFFFFFu;
 static const uint INVALID_PATH = 0xFFFFFFFFu;
+static const uint VISITED_DIR_BIT = 0x80000000u;
 int numVoxelsPerChunk;
 int oCellOffset;
 int batchSize;
@@ -92,6 +93,21 @@ inline uint RotMetaFromIndex(uint rotIndex, uint maxY, uint maxX)
     uint rotX = (rotIndex / maxY) % maxX;
     uint rotZ = rotIndex / (maxY * maxX);
     return PackRot(uint3(rotX, rotY, rotZ));
+}
+
+inline bool VisitedFromEnd(int visited)
+{
+    return (asuint(visited) & VISITED_DIR_BIT) != 0u;
+}
+
+inline uint VisitedTransitionIndex(int visited)
+{
+    return asuint(visited) & ~VISITED_DIR_BIT;
+}
+
+inline int EncodeVisited(uint transitionIndex, bool fromEnd)
+{
+    return (int)(transitionIndex | (fromEnd ? VISITED_DIR_BIT : 0u));
 }
 
 int3 DecodeBatchCoord(uint flat, int sideLength)
