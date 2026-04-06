@@ -24,6 +24,7 @@ MonoBehaviour:
         - SaturatedWater
         - Air
         - Test
+        - Labyrinth
       GroundMaterials:
         value:
         - value:
@@ -61,7 +62,7 @@ MonoBehaviour:
       StructureSystems:
         value:
         - value:
-            StructureSystem: 3
+            StructureSystem: 4
             genSize: 0.244
             genShape: 0.63
             frequency: 1

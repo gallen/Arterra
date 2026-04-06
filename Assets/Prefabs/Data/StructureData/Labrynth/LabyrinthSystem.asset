@@ -1,0 +1,313 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 2c1d7b5e0782942ebb97fdfad51d1210, type: 3}
+  m_Name: LabyrinthSystem
+  m_EditorClassIdentifier: Assembly-CSharp::Arterra.Data.Structure.Jigsaw.JigsawSystem
+  Name: Labyrinth
+  Tags:
+    Reg:
+      value: []
+  Names:
+    value:
+    - Chamber:BendStaircase
+    - Chamber:Catwalk
+    - Chamber:DeadEnd
+    - Chamber:Fork
+    - Chamber:GrandStaircase
+    - Chamber:Hallway
+    - ChamberSpiralStaircaseEntrance
+    - ChamberSpiralStaircaseExit
+    - Chamber:Staircase
+    - SpiralStaircase
+    - SpiralStaircaseFork
+  Structures:
+    value:
+    - Structure: 0
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.29166666
+            y: 0.65
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 3
+          UV:
+            x: 0.75
+            y: 0.25
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 1
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 2
+          UV:
+            x: 0.5
+            y: 0.6785714
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.6785714
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 0.5
+        - Name: Chambers
+          Connection: 0
+          UV:
+            x: 0.5
+            y: 0.21428572
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 0.5
+        - Name: Chambers
+          Connection: 3
+          UV:
+            x: 0.5
+            y: 0.21428572
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 0.5
+    - Structure: 2
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.41666666
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 3
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.375
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 0
+          UV:
+            x: 0.44444445
+            y: 0.375
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 3
+          UV:
+            x: 0.44444445
+            y: 0.375
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 4
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.25
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 2
+          UV:
+            x: 0.5
+            y: 0.6
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 0
+          UV:
+            x: 0.13333334
+            y: 0.6
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 3
+          UV:
+            x: 0.13333334
+            y: 0.6
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 5
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.35714287
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 2
+          UV:
+            x: 0.5
+            y: 0.3571429
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 6
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.375
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 1
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 7
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.45
+            y: 0.25
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 4
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 8
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.22727273
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 4
+          UV:
+            x: 0.5
+            y: 0.6818182
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 9
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 4
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 1
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+    - Structure: 10
+      Sockets:
+        value:
+        - Name: Chambers
+          Connection: 4
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 1
+          UV:
+            x: 0.5
+            y: 0.5
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+        - Name: Chambers
+          Connection: 5
+          UV:
+            x: 0.5
+            y: 0.1923077
+          Transitions:
+            value:
+            - TargetName: Chambers
+              chance: 1
+  edgeFrequency: 0.25
+  references:
+    version: 2
+    RefIds: []

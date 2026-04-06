@@ -7,7 +7,7 @@
 #include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/AppendStructure.hlsl"
 
 #ifndef PATH_PROGRESS_SLACK
-#define PATH_PROGRESS_SLACK 4.0f
+#define PATH_PROGRESS_SLACK 50.0f
 #endif
 
 const static int threadGroupSize = 512;
@@ -99,6 +99,9 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
 
         if (!IsInsideBatch(localCorner))
             return false;
+        int cornerFlat = indexFromCoord(localCorner) + bSTART_visited;
+        //if (batchVisit[cornerFlat].id != (int)pathIndex)
+        //    return false;
     }
 
     if (!VerifyChecks(systemStructure.structureIndex, rot, (float3)origin))
@@ -284,6 +287,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
             int3 currentObjectPos = currentLocal + batchOffset;
             int3 targetPos = dir == 0u ? gEndObjectPos : gStartObjectPos;
+
             if (all(currentObjectPos == targetPos) && CanConnectPorts(currentPortIndex, currentObjectFace, gEndpointPortIndex[dir], gEndpointObjectFace[dir])) {
                 uint old;
                 InterlockedCompareExchange(gMeetFound, 0u, 1u, old);

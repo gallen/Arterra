@@ -496,6 +496,12 @@ public struct StructSystem {
 
     private static uint3 GetRot(uint meta) => new((meta >> 2) & 0x3u, meta & 0x3u, (meta >> 4) & 0x3u);
 
+    private static uint GetObjectFaceFromBaseFace(uint baseFace, uint rotMeta) {
+        uint3 rot = GetRot(rotMeta);
+        int3x3 rotMatrix = CustomUtility.RotationLookupTable[rot.y, rot.x, rot.z];
+        return DirToFaceIdx(math.mul(rotMatrix, FaceIdxToDir(baseFace)));
+    }
+
     private static uint GetBaseFaceFromObjectFace(uint objectFace, uint rotMeta) {
         uint3 rot = GetRot(rotMeta);
         int3x3 rotMatrix = CustomUtility.RotationLookupTable[rot.y, rot.x, rot.z];
@@ -532,17 +538,11 @@ public struct StructSystem {
         return rotatedMask;
     }
 
-    private static uint GetObjectFaceFromBaseFace(uint baseFace, uint rotMeta) {
-        uint3 rot = GetRot(rotMeta);
-        int3x3 rotMatrix = CustomUtility.RotationLookupTable[rot.y, rot.x, rot.z];
-        return DirToFaceIdx(math.mul(rotMatrix, FaceIdxToDir(baseFace)));
-    }
-
     private static float3 GetSocketBasePosition(uint3 size, float2 uv, uint baseFace) {
         float align = baseFace < 3u ? 0.0f : 1.0f;
 
-        return baseFace switch {
-            0u or 3u => new float3(align, uv.x, uv.y) * size,
+        return baseFace switch { //y is up, people don't expect up to ever be x axis
+            0u or 3u => new float3(align, uv.y, uv.x) * size,
             1u or 4u => new float3(uv.x, align, uv.y) * size,
             _ => new float3(uv.x, uv.y, align) * size,
         };

@@ -23,8 +23,8 @@ bool IsInsideBatch(int3 coord) {
 float3 GetSocketBasePosition(uint3 size, float2 uv, uint baseFace) {
     float align = baseFace < 3u ? 0.0 : 1.0;
 
-    if (baseFace == 0u || baseFace == 3u)
-        return float3(align, uv.x, uv.y) * (float3)size;
+    if (baseFace == 0u || baseFace == 3u) //y is up, people don't expect up to ever be x axis
+        return float3(align, uv.y, uv.x) * (float3)size;
     if (baseFace == 1u || baseFace == 4u)
         return float3(uv.x, align, uv.y) * (float3)size;
     return float3(uv.x, uv.y, align) * (float3)size;

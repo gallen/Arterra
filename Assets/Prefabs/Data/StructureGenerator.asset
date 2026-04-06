@@ -44,15 +44,27 @@ MonoBehaviour:
     - {fileID: 11400000, guid: 32730c3ba16a3408d98700c87d63c9e1, type: 2}
     - {fileID: 11400000, guid: 4d7743d877fcc4a7e8cb43615b39dd4c, type: 2}
     - {fileID: 11400000, guid: d832045427b5d4b619d67e8216295b08, type: 2}
+    - {fileID: 11400000, guid: 575ec4788d2b8409eb23782e52022587, type: 2}
+    - {fileID: 11400000, guid: 4887ab4ee05214307857a6289daf06df, type: 2}
+    - {fileID: 11400000, guid: ade3b2a21e89549b49cc05714426e8a2, type: 2}
+    - {fileID: 11400000, guid: 10e28210b5724437bbb127823c042c7e, type: 2}
+    - {fileID: 11400000, guid: a3db9cc6184c147b3b905214c789d3c9, type: 2}
+    - {fileID: 11400000, guid: 0fcd6da7f47764d288a4105fa5a60d47, type: 2}
+    - {fileID: 11400000, guid: 0f0cf9b8c6299491d9cfe98ce55d1241, type: 2}
+    - {fileID: 11400000, guid: 87550d9ec2b694eb38a3f875906d6db8, type: 2}
+    - {fileID: 11400000, guid: 8cbfefd39c7ff4a92b129725126491b2, type: 2}
+    - {fileID: 11400000, guid: 14a11b86b66734a20a101d6f3cd735b8, type: 2}
+    - {fileID: 11400000, guid: df8d53b2bb1444eae9f93eda7f16bb7a, type: 2}
   SystemDictionary:
     Category:
       value: {fileID: 11400000, guid: 70af2a768fe9549acacedeb6142ba52b, type: 2}
     Reg:
     - {fileID: 11400000, guid: dc17b2e413cb84ec2899089a9dc8e2a5, type: 2}
+    - {fileID: 11400000, guid: 609f1eeab046b4211afcb6b8a0cc7dc1, type: 2}
   StructureSystemSettings:
     value:
-      CellSizeFactor: 4
-      MaxConnectionDist: 32
+      CellSizeFactor: 5
+      MaxConnectionDist: 64
       MaxBatchSize: 256
       coarseSSystemNoise: CaveCoarse
       fineSSystemNoise: CaveFine

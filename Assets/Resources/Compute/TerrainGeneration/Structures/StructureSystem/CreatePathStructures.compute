@@ -194,9 +194,6 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
     settings structureSettings = _StructureSettings[systemStructure.structureIndex];
     uint3 rot = GetRot(rotMeta);
 
-    if (!VerifyChecks(systemStructure.structureIndex, rot, (float3)origin))
-        return false;
-
     float3x3 rotMatrix = RotationLookupTable[rot.y][rot.x][rot.z];
     int3 span = max(int3(abs(mul(rotMatrix, (float3)structureSettings.size))), int3(1, 1, 1));
     int3 farCorner = max(span - 1, int3(0, 0, 0));
@@ -210,7 +207,13 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
 
         if (!IsInsideBatch(localCorner))
             return false;
+        int cornerFlat = indexFromCoord(localCorner) + bSTART_visited;
+        if (batchVisit[cornerFlat].id != (int)pathIndex)
+            return false;
     }
+
+    if (!VerifyChecks(systemStructure.structureIndex, rot, (float3)origin))
+        return false;
 
     return true;
 }

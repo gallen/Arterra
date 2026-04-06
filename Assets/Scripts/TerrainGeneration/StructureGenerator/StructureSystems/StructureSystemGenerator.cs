@@ -84,6 +84,7 @@ public static class Generator {
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
     private const int SANITY_SAMPLE_COUNT = 16;
     private static readonly int[] _counterReadback = new int[1];
+    private static float2 average;
 #endif
 
     public static SSystemOffsets offsets;
@@ -121,8 +122,11 @@ public static class Generator {
         Data.Structure.Generation structures = Config.CURRENT.Generation.Structures.value;
         int batchStep = Mathf.CeilToInt((float)jigsaw.MaxBatchSize / jigsaw.CellSize);
         batchStep = batchStep * batchStep * batchStep * 6;
+
+        int binSize = jigsaw.PathColoringBinSize;
         int originOffset = -(jigsaw.MaxConnectionDist * 2);
         int cellsPerChunk = rSettings.mapChunkSize / jigsaw.CellSize;
+        average = float2.zero;
 
         int maxChunkSize = rSettings.mapChunkSize * (1 << structures.maxLoD);
         offsets = new SSystemOffsets(maxChunkSize, jigsaw.MaxConnectionDist, jigsaw.MaxBatchSize, jigsaw.CellSize, jigsaw.PathColoringBinSize, 0);
@@ -218,6 +222,7 @@ public static class Generator {
         SanitateBatches.SetInt("bCOUNT_binList", offsets.binListCounter);
         SanitateBatches.SetInt("bSTART_binHeads", offsets.binHeadsStart);
         SanitateBatches.SetInt("bSTART_binList", offsets.binListStart);
+        SanitateBatches.SetInt("binSize", binSize);
 
         kernel = StructurePathfinder.FindKernel("BatchPathfind");
         StructurePathfinder.SetBuffer(kernel, "overlapLines", UtilityBuffers.GenerationBuffer);
@@ -263,6 +268,7 @@ public static class Generator {
         ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
         ComputeBatchSetup.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
         ComputeBatchSetup.SetBuffer(kernel, "binClosest", UtilityBuffers.GenerationBuffer);
+        ComputeBatchSetup.SetInt("binSize", binSize);
 
         kernel = ComputeBatchSetup.FindKernel("BuildBinClosest");
         ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
@@ -450,12 +456,10 @@ public static class Generator {
         SanitateBatches.SetInt("batchSize", batchSize);
         SanitateBatches.SetInt("numPointsPerAxis", batchesPerAxis);
         SanitateBatches.SetInt("numVoxelsPerChunk", chunkSize);
-        SanitateBatches.SetInt("binSize", binSize);
         SanitateBatches.SetInt("numBinsPerAxis", numBinsPerAxis);
         SanitateBatches.SetInt("binListCapacity", binListCapacity);
 
         ComputeBatchSetup.SetInt("numVoxelsPerChunk", chunkSize);
-        ComputeBatchSetup.SetInt("binSize", binSize);
         ComputeBatchSetup.SetInt("numBinsPerAxis", numBinsPerAxis);
         ComputeBatchSetup.SetInt("binListCapacity", binListCapacity);
 
@@ -503,13 +507,13 @@ public static class Generator {
         ComputeBatchSetup.SetInt("numVoxelsPerChunk", chunkSize);
         PathSetupRetriever.SetInt("batchSize", batchSize);
         StructurePathfinder.SetInt("batchSize", batchSize);
-        ComputeBatchSetup.SetInt("binSize", binSize);
         ComputeBatchSetup.SetInt("numBinsPerAxis", numBinsPerAxis);
         ComputeBatchSetup.SetInt("binListCapacity", binListCapacity);
+        
         ComputeBuffer args;
-        //int totalPaths = ReadCounterValue(offsets.anchorPathCounter);
-        //int totalAnchors = ReadCounterValue(offsets.anchorDictCounter);
-        //int batchPaths = 0;
+        int totalPaths = ReadCounterValue(offsets.anchorPathCounter);
+        int totalAnchors = ReadCounterValue(offsets.anchorDictCounter);
+        int batchPaths = 0;
 
         for (int x = 0; x < batchesPerAxis; x++) {
         for (int y = 0; y < batchesPerAxis; y++) {
@@ -523,7 +527,7 @@ public static class Generator {
             ComputeBatchSetup.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
             ComputeBatchSetup.Dispatch(kernel, numGroupsPerAxis, numGroupsPerAxis, numGroupsPerAxis);
             
-            //batchPaths += ReadCounterValue(offsets.batchPathCounter + index);
+            batchPaths += ReadCounterValue(offsets.batchPathCounter + index);
             kernel = StructurePathfinder.FindKernel("BatchPathfind");
             StructurePathfinder.SetInt("batchIndex", index);
             StructurePathfinder.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
@@ -543,9 +547,13 @@ public static class Generator {
         }}}
 
 #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        //totalPaths = ReadCounterValue(offsets.anchorPathCounter);
-        //int metPaths = CountMeetPaths(totalPaths);
+        int metPaths = CountMeetPaths(totalPaths);
         //Debug.Log($"TotalPaths {totalPaths}, Batch Paths {batchPaths}, Total Anchors {totalAnchors}, Met Paths {metPaths}");
+        if (batchPaths == 0) return;
+        average.x = average.x * average.y + (float)metPaths/batchPaths;
+        average.x /= ++average.y;
+        //average.x += metPaths;
+        Debug.Log($"Found Percentage {average.x}");
         //LogBatchCounterSaturation("cap", offsets.batchSocketCapCounter, batchesPerAxis, batchCapacity, CCoord, depth);
 #endif
     }
@@ -662,6 +670,7 @@ public static class Generator {
 
             finalStructsStart = Mathf.CeilToInt((float)BinListEndInd_W / GEN_STRUCT_WORD);
             offsetEnd = (finalStructsStart + maxPathsPerChunk * AVG_STRUCTS_PER_PATH) * GEN_STRUCT_WORD;
+            Debug.Log(BinListEndInd_W);
         }
     }
 }
