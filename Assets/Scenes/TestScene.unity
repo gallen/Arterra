@@ -653,7 +653,7 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   IsoLevel: 0.5
-  Structure: {fileID: 11400000, guid: 10e28210b5724437bbb127823c042c7e, type: 2}
+  Structure: {fileID: 11400000, guid: 0f0cf9b8c6299491d9cfe98ce55d1241, type: 2}
   loadPath: /Room11
   SDFoffset:
     x: 0

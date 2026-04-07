@@ -4,10 +4,15 @@
 const static uint MAX_TRANSITIONS_PER_NODE = 24u;
 static const uint MAX_BATCH_FRONTIER = 864u;
 static const uint MAX_BATCH_STEPS = 8u;
-static const int INVALID_VISITED = -1;
+static const uint INVALID_VISITED = 0u;
 static const uint FRONTIER_COORD_MASK = 0x1FFFFFFFu;
 static const uint INVALID_PATH = 0xFFFFFFFFu;
 static const uint VISITED_DIR_BIT = 0x80000000u;
+static const uint VISITED_TRANSITION_MASK = 0x1FFFFFFu;
+static const uint VISITED_STEP_SHIFT = 25u;
+static const uint VISITED_STEP_MASK = 0x3Fu << VISITED_STEP_SHIFT;
+static const uint VISITED_SEED_TRANSITION = VISITED_TRANSITION_MASK;
+static const int3 NO_ENDS_COORD = int3(-32768, -32768, -32768);
 int numVoxelsPerChunk;
 int oCellOffset;
 int batchSize;
@@ -75,7 +80,7 @@ struct anchor {
 
 struct PathNode {
     int id;
-    int visited;
+    uint visited;
 };
 
 struct structureData {
@@ -95,19 +100,22 @@ inline uint RotMetaFromIndex(uint rotIndex, uint maxY, uint maxX)
     return PackRot(uint3(rotX, rotY, rotZ));
 }
 
-inline bool VisitedFromEnd(int visited)
+inline bool VisitedFromEnd(uint visited)
 {
-    return (asuint(visited) & VISITED_DIR_BIT) != 0u;
+    return (visited & VISITED_DIR_BIT) != 0u;
 }
 
-inline uint VisitedTransitionIndex(int visited)
+inline uint VisitedTransitionIndex(uint visited)
 {
-    return asuint(visited) & ~VISITED_DIR_BIT;
+    return visited & VISITED_TRANSITION_MASK;
 }
 
-inline int EncodeVisited(uint transitionIndex, bool fromEnd)
+inline uint EncodeVisited(uint transitionIndex, bool fromEnd, uint step)
 {
-    return (int)(transitionIndex | (fromEnd ? VISITED_DIR_BIT : 0u));
+    uint stepEnc = (63u - min(step, 63u)) & 0x3Fu;
+    uint value = (transitionIndex & VISITED_TRANSITION_MASK) | (stepEnc << VISITED_STEP_SHIFT);
+    if (fromEnd) value |= VISITED_DIR_BIT;
+    return value;
 }
 
 int3 DecodeBatchCoord(uint flat, int sideLength)
@@ -120,16 +128,14 @@ uint EncodeCoordFace(uint flatCoord, uint objectFace)
     return (flatCoord & FRONTIER_COORD_MASK) | ((objectFace & 0x7u) << 29);
 }
 
-uint2 MakeFrontierNode(int3 localCoord, uint portIndex, uint objectFace)
+uint MakeFrontierNode(int3 localCoord)
 {
-    return uint2(portIndex, EncodeCoordFace(uint(indexFromCoord(localCoord)), objectFace));
+    return uint(indexFromCoord(localCoord));
 }
 
-void DecodeFrontierNode(uint2 packed, out int3 localCoord, out uint portIndex, out uint objectFace)
+int3 DecodeFrontierNode(uint packed)
 {
-    portIndex = packed.x;
-    objectFace = (packed.y >> 29) & 0x7u;
-    localCoord = DecodeBatchCoord(packed.y & FRONTIER_COORD_MASK, batchSize);
+    return DecodeBatchCoord(packed, batchSize);
 }
  
 void DecodeSocketCap(uint2 packed, out uint portIndex, out int3 localCoord, out uint objectFace) {

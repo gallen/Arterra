@@ -20,6 +20,12 @@ struct anchor {
     int stctInd;
 };
 
+struct sysInfo {
+    float edgeFrequency;
+    float anchorDensity;
+    uint2 structures;
+};
+
 struct PrefixCounters{
     uint GroundEnd;
     uint SurfaceEnd;
@@ -31,6 +37,7 @@ struct PrefixCounters{
 
 StructuredBuffer<PrefixCounters> _BiomePrefCount;
 StructuredBuffer<BMaterial> _BiomeSystems;
+StructuredBuffer<sysInfo> _SystemInfo;
 RWStructuredBuffer<anchor> anchors;
 uint coarseSSystemNoise;
 uint fineSSystemNoise;
@@ -58,8 +65,13 @@ void SamplePoints (uint3 id : SV_DispatchThreadID){
     float fineNoise = GetNoise(pos, fineSSystemNoise);
     int systemInd = GetMaterial(_BiomeSystems, bounds, coarseNoise, fineNoise, heightFactor, weight);
 
-    if (weight < 0.5f) anchors[index].system = -1;
-    else anchors[index].system = systemInd;
+    if (weight < 0.5f || systemInd < 0) {
+        anchors[index].system = -1;
+    } else {
+        float density = saturate(_SystemInfo[systemInd].anchorDensity);
+        uint densitySeed = seed ^ 0xA511E9B3u;
+        anchors[index].system = RandomFloat(densitySeed) > density ? -1 : systemInd;
+    }
 }
 
 uint bSTART_dict;

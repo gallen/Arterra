@@ -12,6 +12,7 @@ const static int numThreads = 128;
 
 struct sysInfo {
     float edgeFrequency;
+    float anchorDensity;
     uint2 structures;
 };
 
@@ -95,8 +96,6 @@ uint bSTART_endpts;
 uint bSTART_paths;
 uint bCOUNT_paths;
 
-static const int3 NO_ENDS_COORD = int3(-32768, -32768, -32768);
-
 RWStructuredBuffer<uint3> anchorPaths;
 RWStructuredBuffer<pathEnds> endPoints;
 
@@ -154,7 +153,8 @@ uint bSTART_caps;
 struct BinLineNode {
     int prev;
     int pathId;
-};
+    int batchIndex;
+};//
 
 uint bCOUNT_binList;
 uint bSTART_binHeads;
@@ -170,7 +170,7 @@ int CeilDiv(int a, int b) {
     return a >= 0 ? (a + b - 1) / b : a / b;
 }
 
-void AddPathToBin(int binIndex, int pathId) {
+void AddPathToBin(int binIndex, int pathId, int batchIndex) {
     int newIndex;
     InterlockedAdd(counters[bCOUNT_binList], 1, newIndex);
     if (newIndex >= binListCapacity)
@@ -188,6 +188,7 @@ void AddPathToBin(int binIndex, int pathId) {
 
     binList[bSTART_binList + newIndex].prev = oldValue;
     binList[bSTART_binList + newIndex].pathId = pathId;
+    binList[bSTART_binList + newIndex].batchIndex = batchIndex;
 }
 
 /*
@@ -222,6 +223,8 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
     minPt -= oCellOffset;
     maxPt -= oCellOffset;
 
+    if (any(maxPt < -connectRadius) || any(minPt > (numVoxelsPerChunk + connectRadius)))
+        return;
     // Batch b covers [b*stride, b*stride + batchSize - 1] (inclusive).
     // Overlaps [minPt, maxPt] iff:  b*stride <= maxPt  AND  b*stride + batchSize - 1 >= minPt
     // => bMin = ceil((minPt - batchSize + 1) / stride) = (minPt - batchSize + stride) / stride
@@ -249,8 +252,9 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
         SocketCaps[bSTART_caps + containedFlat * bSTEP_batch + containedSlot] =
             MakeSocketCap(portIndex, GetPartialEnd(ep), (uint)dir, (int)id.x);
     } else {
+        if (!all(ep.start == ep.end)) {
         InterlockedAdd(counters[bSTART_batchCounts + containedFlat], 1, containedSlot);
-        batchLines[bSTART_batch + containedFlat * bSTEP_batch + containedSlot] = (int)id.x;
+        batchLines[bSTART_batch + containedFlat * bSTEP_batch + containedSlot] = (int)id.x;}
     }
 
     int3 minLocal = clamp(minPt, (int3)0, (int3)(numVoxelsPerChunk - 1));
@@ -270,9 +274,9 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
 
     for (int x = binMin.x; x <= binMax.x; x++) {
         for (int y = binMin.y; y <= binMax.y; y++) {
-            for (int z = binMin.z; z <= binMax.z; z++) {
+            for (int z = binMin.z; z <= binMax.z; z++) {//
                 int binIndex = (int)indexFromCoordManual((uint)x, (uint)y, (uint)z, (uint)numBinsPerAxis);
-                AddPathToBin(binIndex, (int)id.x);
+                AddPathToBin(binIndex, (int)id.x, containedFlat);
             }
         }
     }

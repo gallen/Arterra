@@ -1,6 +1,7 @@
 #pragma kernel InitBins
 #pragma kernel BuildBinClosest
 #pragma kernel SectionGrid
+#pragma kernel BuildFrontierPrefix
 
 /*
 Goal: Assign to each voxel, the path ID of the nearest line segment to it
@@ -46,14 +47,19 @@ const static int numThreads = 8;
 RWStructuredBuffer<PathNode> batchVisit;
 
 uint bSTART_visited;
+uint bSTEP_batch;
+uint bSTART_batchCounts;
+uint bSTART_batch;
+uint bSTART_frontierPrefix;
+uint batchIndex;
 
 struct BinLineNode {
     int prev;
     int pathId;
+    int batchIndex;
 };
-
+//
 static const int NO_LINES = -1;
-static const int3 NO_ENDS_COORD = int3(-32768, -32768, -32768);
 
 uint bCOUNT_paths;
 uint bSTART_endpts;
@@ -65,13 +71,16 @@ uint bSTART_binList;
 int binSize;
 int numBinsPerAxis;
 int binListCapacity;
+int connectRadius;
 int3 batchOffset;
 
 RWStructuredBuffer<int> counters;
+StructuredBuffer<int> batchLines;
 StructuredBuffer<pathEnds> endPoints;
 RWStructuredBuffer<int> binHeads;
-RWStructuredBuffer<int> binClosest;
+RWStructuredBuffer<uint2> binClosest;
 StructuredBuffer<BinLineNode> binList;
+RWStructuredBuffer<uint> frontierPrefix;
 
 bool IsNoEnds(pathEnds value) {
     return all(value.start == NO_ENDS_COORD) && all(value.end == NO_ENDS_COORD);
@@ -95,6 +104,37 @@ float DistanceSqPointSegment(float3 p, float3 a, float3 b) {
     return dot(d, d);
 }
 
+uint HashUint(uint v) {
+    v ^= v >> 16;
+    v *= 0x7feb352du;
+    v ^= v >> 15;
+    v *= 0x846ca68bu;
+    v ^= v >> 16;
+    return v;
+}
+
+uint HashInt3(int3 v) {
+    uint h = HashUint(asuint(v.x));
+    h = HashUint(h ^ asuint(v.y));
+    h = HashUint(h ^ asuint(v.z));
+    return h;
+}
+
+uint HashPath(pathEnds ep) {
+    int3 a = ep.start;
+    int3 b = ep.end;
+    if (IsPartialEnds(ep)) {
+        int3 p = GetPartialEnd(ep);
+        a = p;
+        b = p;
+    }
+
+    // Order-independent hash of the endpoints.
+    uint ha = HashInt3(a);
+    uint hb = HashInt3(b);
+    return ha < hb ? (ha ^ (hb * 0x9e3779b9u)) : (hb ^ (ha * 0x9e3779b9u));
+}
+
 [numthreads(numThreads, numThreads, numThreads)]
 void InitBins(uint3 id : SV_DispatchThreadID)
 {
@@ -103,12 +143,12 @@ void InitBins(uint3 id : SV_DispatchThreadID)
 
     uint binIndex = indexFromCoordManual(id, (uint)numBinsPerAxis);
     binHeads[bSTART_binHeads + binIndex] = NO_LINES;
-    binClosest[bSTART_binClosest + binIndex] = NO_LINES;
+    binClosest[bSTART_binClosest + binIndex] = uint2(asuint(NO_LINES), asuint(-1));
 
     if (all(id == 0))
         counters[bCOUNT_binList] = 0;
 }
-//
+
 [numthreads(numThreads, numThreads, numThreads)]
 void BuildBinClosest(uint3 id : SV_DispatchThreadID)
 {
@@ -121,6 +161,12 @@ void BuildBinClosest(uint3 id : SV_DispatchThreadID)
     int pathCount = counters[bCOUNT_paths];
     float bestDist = 3.4e38f;
     int bestId = NO_LINES;
+    int bestBatchIndex = -1;
+    uint bestHash = 0xFFFFFFFFu;
+
+    int batchSize = numPointsPerAxis;
+    int stride = batchSize - connectRadius;
+    int batchesPerAxis = batchSize >= numVoxelsPerChunk ? 1 : ((numVoxelsPerChunk - batchSize + stride - 1) / stride) + 1;
 
     [loop]
     for (int i = 0; i < pathCount; i++) {
@@ -128,25 +174,35 @@ void BuildBinClosest(uint3 id : SV_DispatchThreadID)
         if (IsNoEnds(ep))
             continue;
 
-        float3 a;
-        float3 b;
+        float3 a; float3 b;
         if (IsPartialEnds(ep)) {
             float3 p = (float3)GetPartialEnd(ep);
-            a = p;
-            b = p;
+            a = p; b = p;
         } else {
             a = (float3)ep.start;
             b = (float3)ep.end;
         }
 
         float distSq = DistanceSqPointSegment(binCenter, a, b);
-        if (distSq < bestDist) {
+        uint pathHash = HashPath(ep);
+        if (distSq < bestDist || (distSq == bestDist && pathHash < bestHash)) {
             bestDist = distSq;
+            bestHash = pathHash;
             bestId = i;
         }
     }
 
-    binClosest[bSTART_binClosest + binIndex] = bestId;
+    if (bestId != NO_LINES) {
+        pathEnds bestEp = endPoints[bSTART_endpts + bestId];
+        int3 minPt = min(bestEp.start, bestEp.end);
+        if (IsPartialEnds(bestEp)) minPt = GetPartialEnd(bestEp);
+        minPt -= oCellOffset;
+
+        int3 bContained = clamp(minPt / stride, (int3)0, (int3)(batchesPerAxis - 1));
+        bestBatchIndex = (int)indexFromCoordManual((uint)bContained.x, (uint)bContained.y, (uint)bContained.z, (uint)batchesPerAxis);
+    }
+
+    binClosest[bSTART_binClosest + binIndex] = uint2(asuint(bestId), asuint(bestBatchIndex));
 }
 /* For each grid entry in the grid, look through overlapLines to determine which lines
 overlap in the batch, and then for each point (pos = batchOffset + id), determine the
@@ -157,18 +213,16 @@ void SectionGrid(uint3 id : SV_DispatchThreadID)
     if (any(id >= numPointsPerAxis))
         return;
 
-    int3 worldPos = (int3)id + batchOffset;
-    int3 localCoord = worldPos - oCellOffset;
+    int3 oPos = (int3)id + batchOffset;
+    int3 localCoord = oPos - oCellOffset;
     int3 binCoord = clamp(localCoord / binSize, (int3)0, (int3)(numBinsPerAxis - 1));
     uint binIndex = indexFromCoordManual((uint3)binCoord, (uint)numBinsPerAxis);
 
     int head = binHeads[bSTART_binHeads + binIndex];
-    int bestId = NO_LINES;
-    float bestDist = 3.4e38f;
-    int steps = 0;
-    int maxSteps = binListCapacity;
+    int bestId = NO_LINES; float bestDist = 3.4e38f;
+    uint bestHash = 0xFFFFFFFFu; int steps = 0;
+    int maxSteps = binListCapacity; int bestBatchIndex = -1;
 
-    [loop]
     while (head != NO_LINES && steps < maxSteps) {
         BinLineNode node = binList[bSTART_binList + head];
         pathEnds ep = endPoints[bSTART_endpts + node.pathId];
@@ -184,10 +238,13 @@ void SectionGrid(uint3 id : SV_DispatchThreadID)
                 b = (float3)ep.end;
             }
 
-            float distSq = DistanceSqPointSegment((float3)worldPos, a, b);
-            if (distSq < bestDist) {
+            float distSq = DistanceSqPointSegment((float3)oPos, a, b);
+            uint pathHash = HashPath(ep);
+            if (distSq < bestDist || (distSq == bestDist && pathHash < bestHash)) {
                 bestDist = distSq;
+                bestHash = pathHash;
                 bestId = node.pathId;
+                bestBatchIndex = node.batchIndex;
             }
         }
 
@@ -195,11 +252,29 @@ void SectionGrid(uint3 id : SV_DispatchThreadID)
         steps++;
     }
 
-    if (bestId == NO_LINES)
-        bestId = binClosest[bSTART_binClosest + binIndex];
+    if (bestId == NO_LINES) {
+        uint2 closest = binClosest[bSTART_binClosest + binIndex];
+        bestId = asint(closest.x);
+        bestBatchIndex = asint(closest.y);
+    }
+
+    if (bestId != NO_LINES && bestBatchIndex == (int)batchIndex)
+        InterlockedAdd(frontierPrefix[bSTART_frontierPrefix + (uint)bestId], 1u);
 
     PathNode node;
     node.id = bestId;
     node.visited = INVALID_VISITED;
     batchVisit[indexFromCoord(id) + bSTART_visited] = node;
+}
+
+[numthreads(1,1,1)]
+void BuildFrontierPrefix(uint3 id : SV_DispatchThreadID)
+{
+    uint pathCount = (uint)counters[bSTART_batchCounts + batchIndex];
+    uint prev = 0u;
+    for (uint i = 0u; i < pathCount; i++) {
+        uint pathId = (uint)batchLines[bSTART_batch + batchIndex * bSTEP_batch + i];
+        frontierPrefix[bSTART_frontierPrefix + pathId] += prev;
+        prev = frontierPrefix[bSTART_frontierPrefix + pathId];//
+    }
 }

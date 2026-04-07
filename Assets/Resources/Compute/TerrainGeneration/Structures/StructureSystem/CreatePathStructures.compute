@@ -31,7 +31,19 @@ uint bSTART_anchors;
 RWStructuredBuffer<uint3> SocketCaps; //format: same as frontire node in PopulatePaths.compute(will be capped in another pass)
 StructuredBuffer<uint3> anchorPaths;
 StructuredBuffer<anchor> anchors;
-StructuredBuffer<int3> pathMeet;
+RWStructuredBuffer<uint2> pathMeet;
+
+PathNode GetVisitOrOverride(int pathId, int flatIndex, uint overrideVisited, bool useOverride)
+{
+    PathNode visit;
+    if (useOverride && overrideVisited != INVALID_VISITED) {
+        visit.id = pathId;
+        visit.visited = overrideVisited;
+        return visit;
+    }
+
+    return batchVisit[flatIndex + bSTART_visited];
+}
 
 
 /*
@@ -44,16 +56,19 @@ Start from end pos of path
     - If structure fails, add start and current struct to SocketCaps and return
         - Otherwise, add structure to genStructures
 */
-bool BacktrackSegment(int pathId, int3 cur, int3 end, bool fromEnd, uint startCapPortIndex, uint startCapObjectFace, uint endCapPortIndex, uint endCapObjectFace)
+uint _StructTestDot;
+uint _StructTestDot1;
+bool BacktrackSegment(int pathId, int3 cur, int3 end, bool fromEnd, uint startCapPortIndex, uint startCapObjectFace, uint endCapPortIndex, uint endCapObjectFace, uint overrideVisited, bool useOverride)
 {
     if (all(cur == end))
         return true;
 
     uint currentPortIndex = startCapPortIndex;
     uint currentObjectFace = startCapObjectFace;
+    bool usedOverride = false;
 
     if (IsInsideBatch(cur)) {
-        PathNode startVisit = batchVisit[indexFromCoord(cur) + bSTART_visited];
+        PathNode startVisit = GetVisitOrOverride(pathId, indexFromCoord(cur), overrideVisited, useOverride);
         if (startVisit.id == pathId && startVisit.visited != INVALID_VISITED && VisitedFromEnd(startVisit.visited) == fromEnd) {
             uint startTransitionIndex = VisitedTransitionIndex(startVisit.visited);
             TransDeltas startTransition = _TransitionDeltasAtlas[startTransitionIndex];
@@ -63,7 +78,7 @@ bool BacktrackSegment(int pathId, int3 cur, int3 end, bool fromEnd, uint startCa
             currentObjectFace = GetObjectFaceFromBaseFace(GetPortBaseFace(currentPortIndex), startRotMeta);
         }
     }
-
+    
     for(uint i = 0u; i < MAX_BATCH_STEPS; i++) {
         if (all(cur == end))
             return true;
@@ -71,7 +86,9 @@ bool BacktrackSegment(int pathId, int3 cur, int3 end, bool fromEnd, uint startCa
             break;
 
         int index = indexFromCoord(cur);
-        PathNode visit = batchVisit[index + bSTART_visited];
+        PathNode visit = GetVisitOrOverride(pathId, index, overrideVisited, useOverride && !usedOverride);
+        if (useOverride && !usedOverride && overrideVisited != INVALID_VISITED)
+            usedOverride = true;
         if (visit.id != pathId)
             break;
         if (visit.visited == INVALID_VISITED)
@@ -91,7 +108,7 @@ bool BacktrackSegment(int pathId, int3 cur, int3 end, bool fromEnd, uint startCa
         uint curFI = GetObjectFaceFromBaseFace(GetPortBaseFace((uint)transition.nextPort), rotMeta);
         uint nextFI = GetSocketFaceAtWorldPos(prevSocketWorld, originWorld, sysStructInd, rotMeta);
         if (nextFI == INVALID_PATH)
-            break;
+            break;//
 
         structureData data;
         data.structurePos = originWorld;
@@ -151,17 +168,33 @@ void BacktrackGridPath(uint3 id : SV_DispatchThreadID){
     }
 
 
-    int3 meetWorld = pathMeet[pathId + bSTART_pathMeet];
-    bool hasMeet = meetWorld.x != -1;
-    int3 meetLocal = hasMeet ? meetWorld - batchOffset : endPts.end - batchOffset;
+    uint2 meetData = pathMeet[pathId + bSTART_pathMeet];
+    uint meetLocalIndex = meetData.x;
+    uint meetOtherVisited = meetData.y;
+    bool hasMeet = meetLocalIndex != INVALID_PATH;
+    int3 meetLocal = hasMeet ? DecodeBatchCoord(meetLocalIndex, batchSize) : endPts.end - batchOffset;
     int3 startLocal = endPts.start - batchOffset;
     int3 endLocal = endPts.end - batchOffset;
 
     if (hasMeet) {
-        BacktrackSegment(pathId, meetLocal, startLocal, false, startPortIndex, dirs.x, startPortIndex, dirs.x);
-        BacktrackSegment(pathId, meetLocal, endLocal, true, endPortIndex, dirs.y, endPortIndex, dirs.y);
+        int meetFlat = indexFromCoord(meetLocal) + bSTART_visited;
+        PathNode meetVisit = batchVisit[meetFlat];
+        bool meetVisitValid = meetVisit.id == pathId && meetVisit.visited != INVALID_VISITED;
+        bool meetVisitDir = meetVisitValid ? VisitedFromEnd(meetVisit.visited) : false;
+
+        bool useStartOverride = meetOtherVisited != INVALID_VISITED && VisitedFromEnd(meetOtherVisited) == false && (!meetVisitValid || meetVisitDir != false);
+        bool useEndOverride = meetOtherVisited != INVALID_VISITED && VisitedFromEnd(meetOtherVisited) == true && (!meetVisitValid || meetVisitDir != true);
+
+        //pathMeet[pathId + bSTART_pathMeet] = NO_ENDS_COORD;
+        if (!BacktrackSegment(pathId, meetLocal, startLocal, false, startPortIndex, dirs.x, startPortIndex, dirs.x, meetOtherVisited, useStartOverride)) return;
+        if (!BacktrackSegment(pathId, meetLocal, endLocal, true, endPortIndex, dirs.y, endPortIndex, dirs.y, meetOtherVisited, useEndOverride)) return;
+        //pathMeet[pathId + bSTART_pathMeet] = meetWorld;
+        structureData data;
+        data.structurePos = meetLocal + batchOffset;
+        data.meta = PackStctMeta(_StructTestDot, 0);
+        AppendStructure(data);
     } else {
-        BacktrackSegment(pathId, endLocal, startLocal, false, endPortIndex, dirs.y, startPortIndex, dirs.x);
+        BacktrackSegment(pathId, endLocal, startLocal, false, endPortIndex, dirs.y, startPortIndex, dirs.x, INVALID_VISITED, false);
     }
 }
 
@@ -198,7 +231,7 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
     int3 span = max(int3(abs(mul(rotMatrix, (float3)structureSettings.size))), int3(1, 1, 1));
     int3 farCorner = max(span - 1, int3(0, 0, 0));
 
-    [unroll]
+    /*[unroll]
     for (uint corner = 0u; corner < 8u; corner++) {
         int3 cornerOffset = int3((corner & 0x1u) != 0u ? farCorner.x : 0,
             (corner & 0x2u) != 0u ? farCorner.y : 0,
@@ -210,7 +243,7 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
         int cornerFlat = indexFromCoord(localCorner) + bSTART_visited;
         if (batchVisit[cornerFlat].id != (int)pathIndex)
             return false;
-    }
+    }*/
 
     if (!VerifyChecks(systemStructure.structureIndex, rot, (float3)origin))
         return false;
@@ -238,6 +271,7 @@ void CapDanglingSockets(uint3 id : SV_DispatchThreadID){
     uint currentObjectFace;
     DecodeSocketCap(capEntry.xy, currentPortIndex, socketWorldPos, currentObjectFace);
     uint pathId = capEntry.z;
+    int3 socketWorldSeedPos = socketWorldPos + (int3)sOffset;//
 
     [loop]
     for (uint step = 0u; step < MAX_CAP_LENGTH; step++) {
@@ -246,10 +280,10 @@ void CapDanglingSockets(uint3 id : SV_DispatchThreadID){
         int optionCount = curPort.sockets.y - curPort.sockets.x;
         if (optionCount <= 0)
             return;
-        uint baseSeed = Random(socketWorldPos ^ currentPortIndex ^ step);
+        uint baseSeed = Random(socketWorldSeedPos ^ currentPortIndex ^ step);
         int startOffset = (int)(baseSeed % (uint)optionCount);
 
-        [loop][fastopt]
+        [loop]
         for (int optionOffset = 0; optionOffset < optionCount && !placed; optionOffset++) {
             int optionIdx = curPort.sockets.x + (startOffset + optionOffset) % optionCount;
             PortSocketOption candidate = _PortSocketOptions[optionIdx];
@@ -286,6 +320,7 @@ void CapDanglingSockets(uint3 id : SV_DispatchThreadID){
                     return;
 
                 socketWorldPos += transition.deltaPosition;
+                socketWorldSeedPos += transition.deltaPosition;
                 currentPortIndex = (uint)transition.nextPort;
                 currentObjectFace = GetObjectFaceFromBaseFace(GetPortBaseFace((uint)transition.nextPort), nextRotMeta);
                 placed = true;

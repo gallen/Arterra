@@ -16,6 +16,7 @@ struct anchor {
 
 struct sysInfo {
     float edgeFrequency;
+    float anchorDensity;
     uint2 structures;
 };
 

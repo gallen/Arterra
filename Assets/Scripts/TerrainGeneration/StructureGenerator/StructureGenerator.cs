@@ -88,7 +88,7 @@ public class Creator
         if(Jigsaw.Generator.PlanStructureSystems(chunkSize, depth, chunkCoord))
             ClearRange(GenerationBuffer, 6, 1);
         else ClearRange(GenerationBuffer, 7, 0);
-
+        
         Generator.SampleStructureLoD(Config.CURRENT.Generation.Structures.value.maxLoD, chunkSize, depth, chunkCoord);
         Generator.IdentifyStructures(offset, IsoLevel);
 

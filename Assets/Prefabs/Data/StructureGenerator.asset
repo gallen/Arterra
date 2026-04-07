@@ -59,13 +59,12 @@ MonoBehaviour:
     Category:
       value: {fileID: 11400000, guid: 70af2a768fe9549acacedeb6142ba52b, type: 2}
     Reg:
-    - {fileID: 11400000, guid: dc17b2e413cb84ec2899089a9dc8e2a5, type: 2}
     - {fileID: 11400000, guid: 609f1eeab046b4211afcb6b8a0cc7dc1, type: 2}
   StructureSystemSettings:
     value:
-      CellSizeFactor: 5
-      MaxConnectionDist: 64
-      MaxBatchSize: 256
+      CellSizeFactor: 4
+      MaxConnectionDist: 32
+      MaxBatchSize: 128
       coarseSSystemNoise: CaveCoarse
       fineSSystemNoise: CaveFine
       MaxSystemLoD: 2

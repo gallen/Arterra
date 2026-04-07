@@ -60,14 +60,18 @@ namespace Arterra.Utils {
             clearRange.SetBuffer(0, ShaderIDProps.Counters, buffer);
             clearRange.SetInt(ShaderIDProps.Length, length);
             clearRange.SetInt(ShaderIDProps.Start, start);
-            clearRange.Dispatch(0, 1, 1, 1);
+            clearRange.GetKernelThreadGroupSizes(0, out uint threadGroupSize, out _, out _);
+            int threadGroups = Mathf.CeilToInt(length / (float)threadGroupSize);
+            clearRange.Dispatch(0, threadGroups, 1, 1);
         }
 
         public static void ClearRange(GraphicsBuffer buffer, int length, int start) {
             clearRange.SetBuffer(0, ShaderIDProps.Counters, buffer);
             clearRange.SetInt(ShaderIDProps.Length, length);
             clearRange.SetInt(ShaderIDProps.Start, start);
-            clearRange.Dispatch(0, 1, 1, 1);
+            clearRange.GetKernelThreadGroupSizes(0, out uint threadGroupSize, out _, out _);
+            int threadGroups = Mathf.CeilToInt(length / (float)threadGroupSize);
+            clearRange.Dispatch(0, threadGroups, 1, 1);
         }
 
         public static ComputeBuffer CopyCount(ComputeBuffer source, ComputeBuffer dest = null, int readOffset = 0, int writeOffset = 0) {
