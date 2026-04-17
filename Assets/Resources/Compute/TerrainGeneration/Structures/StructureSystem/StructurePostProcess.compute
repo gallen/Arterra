@@ -1,0 +1,326 @@
+#pragma kernel InitStructurePruneState
+#pragma kernel InitDepthTables
+#pragma kernel BuildStructureBins
+#pragma kernel CalculateMinDepths
+#pragma kernel EmitFinalStructures
+
+#include "Assets/Resources/Compute/Utility/GetIndex.hlsl"
+#include "Assets/Resources/Compute/Utility/Random.hlsl"
+#include "Assets/Resources/Compute/Utility/RotationTables.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathTypes.hlsl"
+
+const static int THREADS_3D = 8;
+const static int THREADS_1D = 64;
+const static int NO_LINES = -1;
+const static int MAX_DEPTH_VALUE = 0x7FFFFFFF;
+
+struct BinNode {
+    int prev;
+    int structIndex;
+};
+
+RWStructuredBuffer<int> counters;
+StructuredBuffer<intermediateStructureData> intermediateStructures;
+RWStructuredBuffer<structureData> finalStructures;
+RWStructuredBuffer<int> binHeads;
+RWStructuredBuffer<BinNode> binList;
+RWStructuredBuffer<int> maxDepths;
+RWStructuredBuffer<uint2> danglingDepths;
+StructuredBuffer<settings> _StructureSettings;
+
+uint bCOUNT_paths;
+uint bCOUNT_intermediate;
+uint bCOUNT_final;
+uint bCOUNT_binList;
+uint bSTART_capCounts;
+
+uint bSTART_intermediate;
+uint bSTART_final;
+uint bSTART_binHeads;
+uint bSTART_binList;
+uint bSTART_maxDepths;
+uint bSTART_danglingDepths;
+
+int numBinsPerAxis;
+int binSize;
+int binListCapacity;
+int capCapacity;
+int3 oCCoord;
+int chunkSize;
+
+inline void UnpackStctMetaLocal(uint meta, out uint index, out uint rotMeta) {
+    index = meta >> 7u;
+    rotMeta = meta & 0x3Fu;
+}
+
+uint StructurePriority(structureData structure) {
+    int3 basePos = int3(floor(structure.structurePos));
+    int3 worldPos = oCCoord * chunkSize + basePos;
+    uint seed = Random(worldPos) ^ Random((int)structure.meta);
+    return Random(seed);
+}
+
+bool GetBounds(int structIndex, out int3 minBounds, out int3 maxBounds) {
+    intermediateStructureData entry = intermediateStructures[bSTART_intermediate + structIndex];
+    structureData structure = entry.structure;
+    uint structureIndex;
+    uint rotMeta;
+    UnpackStctMetaLocal(structure.meta, structureIndex, rotMeta);
+
+    settings set = _StructureSettings[structureIndex];
+    uint3 rot = GetRot(rotMeta);
+    float3x3 rotMatrix = RotationLookupTable[rot.y][rot.x][rot.z];
+    int3 span = max(int3(abs(mul(rotMatrix, (float3)set.size))), int3(1, 1, 1));
+
+    minBounds = int3(floor(structure.structurePos));
+    maxBounds = minBounds + span;
+    return true;
+}
+
+bool IntersectsAABB(int3 aMin, int3 aMax, int3 bMin, int3 bMax) {
+    return all(aMin < bMax) && all(bMin < aMax);
+}
+
+bool IntersectsChunkBounds(int3 minBounds, int3 maxBounds) {
+    int3 chunkMin = oCellOffset;
+    int3 chunkMax = oCellOffset + numVoxelsPerChunk;
+    return IntersectsAABB(minBounds, maxBounds, chunkMin, chunkMax);
+}
+
+void AddStructureToBin(int binIndex, int structIndex) {
+    int newIndex;
+    InterlockedAdd(counters[bCOUNT_binList], 1, newIndex);
+    if (newIndex >= binListCapacity)
+        return;
+
+    int oldValue = binHeads[bSTART_binHeads + binIndex];
+    int replaced;
+    [loop]
+    while (true) {
+        InterlockedCompareExchange(binHeads[bSTART_binHeads + binIndex], oldValue, newIndex, replaced);
+        if (replaced == oldValue)
+            break;
+        oldValue = replaced;
+    }
+
+    binList[bSTART_binList + newIndex].prev = oldValue;
+    binList[bSTART_binList + newIndex].structIndex = structIndex;
+}
+
+[numthreads(THREADS_3D, THREADS_3D, THREADS_3D)]
+void InitStructurePruneState(uint3 id : SV_DispatchThreadID)
+{
+    if (any(id >= numBinsPerAxis))
+        return;
+
+    uint binIndex = indexFromCoordManual(id, (uint)numBinsPerAxis);
+    binHeads[bSTART_binHeads + binIndex] = NO_LINES;
+
+    if (all(id == 0u)) {
+        counters[bCOUNT_binList] = 0;
+        counters[bCOUNT_final] = 0;
+    }
+}
+
+[numthreads(THREADS_1D, 1, 1)]
+void InitDepthTables(uint3 id : SV_DispatchThreadID)
+{
+    uint pathCount = (uint)max(counters[bCOUNT_paths], 0);
+    if (id.x >= pathCount)
+        return;
+
+    maxDepths[bSTART_maxDepths + id.x] = MAX_DEPTH_VALUE;
+}
+
+[numthreads(THREADS_1D, 1, 1)]
+void BuildStructureBins(uint3 id : SV_DispatchThreadID)
+{
+    uint structCount = (uint)max(counters[bCOUNT_intermediate], 0);
+    if (id.x >= structCount)
+        return;
+
+    int3 minBounds;
+    int3 maxBounds;
+    if (!GetBounds((int)id.x, minBounds, maxBounds))
+        return;
+    if (!IntersectsChunkBounds(minBounds, maxBounds))
+        return;
+
+    int3 minLocal = minBounds - oCellOffset;
+    int3 maxLocal = (maxBounds - 1) - oCellOffset;
+    int3 binMin = clamp(minLocal / binSize, (int3)0, (int3)(numBinsPerAxis - 1));
+    int3 binMax = clamp(maxLocal / binSize, (int3)0, (int3)(numBinsPerAxis - 1));
+
+    int3 binSpan = binMax - binMin + 1;
+    int spanSide = max(binSpan.x, max(binSpan.y, binSpan.z));
+    int flatCount = spanSide * spanSide * spanSide;
+    for (int flat = 0; flat < flatCount; flat++) {
+        int3 local = coordFromIndexManual((uint)flat, (uint)spanSide);
+        if (any(local >= binSpan))
+            continue;
+
+        int3 binCoord = binMin + local;
+        int binIndex = (int)indexFromCoordManual((uint3)binCoord, (uint)numBinsPerAxis);
+        AddStructureToBin(binIndex, (int)id.x);
+    }
+}
+
+[numthreads(THREADS_1D, 1, 1)]
+void CalculateMinDepths(uint3 id : SV_DispatchThreadID)
+{
+    uint structCount = (uint)max(counters[bCOUNT_intermediate], 0);
+    if (id.x >= structCount)
+        return;
+
+    intermediateStructureData selfEntry = intermediateStructures[bSTART_intermediate + id.x];
+    uint2 info = selfEntry.info;
+    uint depth = StructInfoDepth(info);
+    uint ownerPath = StructInfoOwnerPath(info);
+    if (depth == 0u || ownerPath == INVALID_OWNER_ID)
+        return;
+
+    uint pathCount = (uint)max(counters[bCOUNT_paths], 0);
+    uint capCount = min((uint)max(counters[bSTART_capCounts], 0), (uint)capCapacity);
+    bool isCap = StructInfoIsCap(info);
+    if (isCap) {
+        if (ownerPath >= capCount)
+            return;
+    } else {
+        if (ownerPath >= pathCount)
+            return;
+    }
+
+    int3 selfMin;
+    int3 selfMax;
+    if (!GetBounds((int)id.x, selfMin, selfMax))
+        return;
+    if (!IntersectsChunkBounds(selfMin, selfMax))
+        return;
+
+    structureData selfStructure = selfEntry.structure;
+    uint selfPriority = StructurePriority(selfStructure);
+
+    int3 minLocal = selfMin - oCellOffset;
+    int3 maxLocal = (selfMax - 1) - oCellOffset;
+    int3 binMin = clamp(minLocal / binSize, (int3)0, (int3)(numBinsPerAxis - 1));
+    int3 binMax = clamp(maxLocal / binSize, (int3)0, (int3)(numBinsPerAxis - 1));
+
+    int3 binSpan = binMax - binMin + 1;
+    int spanSide = max(binSpan.x, max(binSpan.y, binSpan.z));
+    int flatCount = spanSide * spanSide * spanSide;
+    for (int flat = 0; flat < flatCount; flat++) {
+        int3 local = coordFromIndexManual((uint)flat, (uint)spanSide);
+        if (any(local >= binSpan))
+            continue;
+
+        int3 binCoord = binMin + local;
+        int binIndex = (int)indexFromCoordManual((uint3)binCoord, (uint)numBinsPerAxis);
+        int nodeIndex = binHeads[bSTART_binHeads + binIndex];
+        int stepCount = 0;
+
+        while (nodeIndex != NO_LINES && stepCount < binListCapacity) {
+            BinNode node = binList[bSTART_binList + nodeIndex];
+            int otherIndex = node.structIndex;
+            nodeIndex = node.prev;
+            stepCount++;
+
+            if (otherIndex == (int)id.x)
+                continue;
+
+            intermediateStructureData otherEntry = intermediateStructures[bSTART_intermediate + otherIndex];
+            uint2 otherInfo = otherEntry.info;
+            uint otherDepth = StructInfoDepth(otherInfo);
+            bool otherIsCap = StructInfoIsCap(otherInfo);
+            if (otherDepth == 0u)
+                continue;
+
+            int3 otherMin;
+            int3 otherMax;
+            if (!GetBounds(otherIndex, otherMin, otherMax))
+                continue;
+            if (!IntersectsAABB(selfMin, selfMax, otherMin, otherMax))
+                continue;
+
+            bool loses = false;
+            if (isCap != otherIsCap) {
+                // Preserve main path continuity: caps always lose against non-cap structures.
+                loses = isCap && !otherIsCap;
+            } else if (depth > otherDepth) {
+                loses = true;
+            } else if (depth == otherDepth) {
+                structureData otherStructure = otherEntry.structure;
+                uint otherPriority = StructurePriority(otherStructure);
+                loses = selfPriority < otherPriority;
+            }
+
+            if (!loses)
+                continue;
+
+            if (isCap) {
+                InterlockedMin(danglingDepths[bSTART_danglingDepths + ownerPath].x, depth);
+            } else {
+                InterlockedMin(maxDepths[bSTART_maxDepths + ownerPath], (int)depth);
+            }
+            return;
+        }
+    }
+}
+
+[numthreads(THREADS_1D, 1, 1)]
+void EmitFinalStructures(uint3 id : SV_DispatchThreadID)
+{
+    uint structCount = (uint)max(counters[bCOUNT_intermediate], 0);
+    if (id.x >= structCount)
+        return;
+
+    intermediateStructureData entry = intermediateStructures[bSTART_intermediate + id.x];
+    structureData structure = entry.structure;
+    uint2 info = entry.info;
+    uint ownerPath = StructInfoOwnerPath(info);
+    uint depth = StructInfoDepth(info);
+
+    int3 minBounds;
+    int3 maxBounds;
+    if (!GetBounds((int)id.x, minBounds, maxBounds))
+        return;
+    if (!IntersectsChunkBounds(minBounds, maxBounds))
+        return;
+
+    uint pathCount = (uint)max(counters[bCOUNT_paths], 0);
+    uint capCount = min((uint)max(counters[bSTART_capCounts], 0), (uint)capCapacity);
+    bool keep = true;
+
+    if (ownerPath != INVALID_OWNER_ID) {
+        if (StructInfoIsCap(info)) {
+            if (ownerPath >= capCount)
+                return;
+
+            uint2 capInfo = danglingDepths[bSTART_danglingDepths + ownerPath];
+            int capDepth = (int)capInfo.x;
+            uint parentPath = capInfo.y;
+            keep = depth < (uint)max(capDepth, 0);
+
+            if (keep && parentPath != INVALID_OWNER_ID) {
+                if (parentPath < pathCount) {
+                    int parentDepth = maxDepths[bSTART_maxDepths + parentPath];
+                    keep = StructInfoParentDepth(info) < (uint)max(parentDepth, 0);
+                } else {
+                    keep = false;
+                }
+            }
+        } else {
+            if (ownerPath >= pathCount)
+                return;
+
+            int maxDepth = maxDepths[bSTART_maxDepths + ownerPath];
+            keep = depth < (uint)max(maxDepth, 0);
+        }
+    }
+
+    if (!keep)
+        return;
+
+    int appendIndex;
+    InterlockedAdd(counters[bCOUNT_final], 1, appendIndex);
+    finalStructures[bSTART_final + appendIndex] = structure;
+}

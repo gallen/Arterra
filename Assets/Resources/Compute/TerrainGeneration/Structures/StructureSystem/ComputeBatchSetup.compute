@@ -58,7 +58,7 @@ struct BinLineNode {
     int pathId;
     int batchIndex;
 };
-//
+
 static const int NO_LINES = -1;
 
 uint bCOUNT_paths;
@@ -187,17 +187,17 @@ void BuildBinClosest(uint3 id : SV_DispatchThreadID)
         uint pathHash = HashPath(ep);
         if (distSq < bestDist || (distSq == bestDist && pathHash < bestHash)) {
             bestDist = distSq;
-            bestHash = pathHash;
             bestId = i;
+            bestHash = pathHash;
         }
     }
 
     if (bestId != NO_LINES) {
         pathEnds bestEp = endPoints[bSTART_endpts + bestId];
         int3 minPt = min(bestEp.start, bestEp.end);
-        if (IsPartialEnds(bestEp)) minPt = GetPartialEnd(bestEp);
+        if (IsPartialEnds(bestEp))
+            minPt = GetPartialEnd(bestEp);
         minPt -= oCellOffset;
-
         int3 bContained = clamp(minPt / stride, (int3)0, (int3)(batchesPerAxis - 1));
         bestBatchIndex = (int)indexFromCoordManual((uint)bContained.x, (uint)bContained.y, (uint)bContained.z, (uint)batchesPerAxis);
     }
@@ -213,8 +213,8 @@ void SectionGrid(uint3 id : SV_DispatchThreadID)
     if (any(id >= numPointsPerAxis))
         return;
 
-    int3 oPos = (int3)id + batchOffset;
-    int3 localCoord = oPos - oCellOffset;
+    int3 worldPos = (int3)id + batchOffset;
+    int3 localCoord = worldPos - oCellOffset;
     int3 binCoord = clamp(localCoord / binSize, (int3)0, (int3)(numBinsPerAxis - 1));
     uint binIndex = indexFromCoordManual((uint3)binCoord, (uint)numBinsPerAxis);
 
@@ -238,7 +238,7 @@ void SectionGrid(uint3 id : SV_DispatchThreadID)
                 b = (float3)ep.end;
             }
 
-            float distSq = DistanceSqPointSegment((float3)oPos, a, b);
+            float distSq = DistanceSqPointSegment((float3)worldPos, a, b);
             uint pathHash = HashPath(ep);
             if (distSq < bestDist || (distSq == bestDist && pathHash < bestHash)) {
                 bestDist = distSq;

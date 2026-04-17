@@ -4,9 +4,11 @@ using Arterra.Utils;
 using Arterra.Editor;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Serialization;
 using Newtonsoft.Json;
 using FMOD.Studio;
 using System;
+using System.Text;
 using Arterra.Data.Biome;
 
 namespace Arterra.Data.Structure.Jigsaw {
@@ -15,7 +17,6 @@ namespace Arterra.Data.Structure.Jigsaw {
         //Warning don't make this too small or memory overflow
         public int CellSizeFactor = 4;
         public int MaxConnectionDist = 32;
-        public int MaxBatchSize = 128;
 
         [RegistryReference("Noise")]
         public string coarseSSystemNoise;
@@ -28,108 +29,54 @@ namespace Arterra.Data.Structure.Jigsaw {
         [JsonIgnore]
         public int CellSize => 1 << CellSizeFactor;
         public int MaxSystemLoD = 2;
-        public int PathColoringBinSize = 8;
+        [FormerlySerializedAs("PathColoringBinSize")]
+        public int StructureColoringBinSize = 8;
     }
 }
 
 namespace Arterra.Engine.Terrain.Structure.Jigsaw {
-/*
-Plan:
-- For each grid cell, determine structure ID it belongs to
-    - Based on sampled biome at center of cell, and 2-3 other noise maps
-- Poisson sample some grid cells(int pos) to be anchor points
-- Each anchor point adopts the unqiue StructureSystemID of its parent cell
-- Bin anchor points into StructureSystems by their Structure System ID
-- Determine which anchor cells are connected to which other anchor cells
-    - Look in fixed radius in the positive direction from every cell
-    - Each anchor cell will own connections to all those cells it finds
-- Assign jigsaw pieces to the anchor cell based on its connections and worldpos.
-    - Test whether there are any jigsaw pieces that fit these connections and all its checks
-
-ComputeRegion size determined by amount of memory for LUTs(100mb -> ~64^3 voxels)
-Amount of ComputeRegions determined by chunk size / compute region size
-
-Construct ComputeRegion LUT:
-Divide grid into (overlapping) ComputeRegions:
-- For each path, compute the actual physical paths given the pieces
-    - Discard any that have been pruned
-- Determine which Compute Region fully contains it
-- Add line to linked list of that compute region
-
-ForEach Compute Region:
-    Section Path Space:
-        - For each grid voxel, go through all lines in compute region:
-            - Determine closest line, set "id" to that path
-        - Clear visited uint (pop. with structure id and rot)
-
-    Pathfind:
-        - Groupshared memory for frontier
-        - Update expand loop until reach end
-        - Only explore if voxel id belongs to path
-        - Only explore if socket is closer to endpoint to avoid self-intersecting cycles
-            (as we don't mark the entire structure region as visited, only socket points)
-    Backtrack, add sockets:
-        - Add structures to completed structure list
-        - Add any open sockets to to-cap list
-    Cap Open Sockets:
-        - For all open socket, try to add random structure
-          with 2 or 1 connection ports
-            - Only add if completely within voxel id
-        - Fail if not found, otherwise add to list
-*/
+// The runtime flow in this file mirrors Assets/Scripts/TerrainGeneration/StructureGenerator/StructureSystems/Plan.txt.
+// Step 1 and Steps 8/9 remain close to the previous implementation, while orchestration is split into explicit
+// phases to match the new pipeline shape.
 
 public static class Generator {
-    private const int ANCHOR_STRIDE_WORD = 3 + 1 + 1;
-    private const int ANCHOR_PATH_WORD = 3;
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-    private const int SANITY_SAMPLE_COUNT = 16;
-    private static readonly int[] _counterReadback = new int[1];
-    private static float2 average;
-#endif
+    private static int plannerPathfindDispatchDivisor = 1;
+    private static int plannerBacktrackDispatchDivisor = 1;
 
     public static SSystemOffsets offsets;
     private static ComputeShader AnchorSampler;
     private static ComputeShader GraphConnector;
     private static ComputeShader SanitateBatches;
-    private static ComputeShader ComputeBatchSetup;
+    private static ComputeShader PathBatchPlanner;
     private static ComputeShader StructurePathfinder;
     private static ComputeShader PathSetupRetriever;
+    private static ComputeShader StructurePostProcess;
+
     private static StructureSystem jigsaw => Config.CURRENT.Generation.Structures.value.StructureSystemSettings;
+
+    private static uint GetPlannerDispatchArgsOffsetBytes(int batchIndex, int stageIndex) {
+        return (uint)((offsets.batchDispatchArgsStart + (batchIndex * SSystemOffsets.PLANNER_DISPATCH_ARGS_PER_BATCH + stageIndex) * SSystemOffsets.DISPATCH_ARGS_WORD) * sizeof(int));
+    }
 
     static Generator() {
         AnchorSampler = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/SampleAnchors");
         GraphConnector = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/GraphConnector");
         SanitateBatches = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/SanitatePathBatches");
-        ComputeBatchSetup = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/ComputeBatchSetup");
+        PathBatchPlanner = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/PathBatchPlanner");
         StructurePathfinder = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/PopulatePaths");
         PathSetupRetriever = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/CreatePathStructures");
-    }
-
-    private static int CalculateBatchAxisCount(int totalAxisSize, int batchSize, int overlapSize) {
-        if (totalAxisSize <= batchSize)
-            return 1;
-
-        int batchStride = batchSize - overlapSize;
-        if (batchStride <= 0)
-            throw new InvalidOperationException($"Invalid structure-system batch stride: batchSize={batchSize}, overlapSize={overlapSize}");
-
-        return Mathf.CeilToInt((totalAxisSize - batchSize) / (float)batchStride) + 1;
+        StructurePostProcess = Resources.Load<ComputeShader>("Compute/TerrainGeneration/Structures/StructureSystem/StructurePostProcess");
     }
 
     public static void Initialize() {
         offsets = new SSystemOffsets();
         Configuration.Quality.Terrain rSettings = Config.CURRENT.Quality.Terrain.value;
-        Data.Structure.Generation structures = Config.CURRENT.Generation.Structures.value;
-        int batchStep = Mathf.CeilToInt((float)jigsaw.MaxBatchSize / jigsaw.CellSize);
-        batchStep = batchStep * batchStep * batchStep * 6;
 
-        int binSize = jigsaw.PathColoringBinSize;
         int originOffset = -(jigsaw.MaxConnectionDist * 2);
         int cellsPerChunk = rSettings.mapChunkSize / jigsaw.CellSize;
-        average = float2.zero;
-
-        int maxChunkSize = rSettings.mapChunkSize * (1 << structures.maxLoD);
-        offsets = new SSystemOffsets(maxChunkSize, jigsaw.MaxConnectionDist, jigsaw.MaxBatchSize, jigsaw.CellSize, jigsaw.PathColoringBinSize, 0);
+        int maxChunkSize = rSettings.mapChunkSize * (1 << jigsaw.MaxSystemLoD);
+        offsets = new SSystemOffsets(maxChunkSize, jigsaw.MaxConnectionDist, jigsaw.CellSize, jigsaw.StructureColoringBinSize, 0);
+        int capSectionCapacity = offsets.maxCapsPerBatch * offsets.maxBatchesPerChunk;
 
         int kernel = AnchorSampler.FindKernel("SamplePoints");
         AnchorSampler.SetBuffer(kernel, "anchors", UtilityBuffers.GenerationBuffer);
@@ -182,8 +129,8 @@ public static class Generator {
         kernel = SanitateBatches.FindKernel("SelectAnchorPieces");
         SanitateBatches.SetBuffer(kernel, "anchors", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "anchorDict", UtilityBuffers.GenerationBuffer);
-        SanitateBatches.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "socketUsage", UtilityBuffers.GenerationBuffer);
+        SanitateBatches.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetInt("bCOUNT_dict", offsets.anchorDictCounter);
         SanitateBatches.SetInt("bSTART_dict", offsets.anchorDictStart);
@@ -192,8 +139,8 @@ public static class Generator {
         SanitateBatches.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
         SanitateBatches.SetInt("bSTART_paths", offsets.anchorPathStart);
         SanitateBatches.SetInt("bSTART_endpts", offsets.pathEndsStart);
-        SanitateBatches.SetInt("bCOUNT_struct", offsets.finalStructsCounter);
-        SanitateBatches.SetInt("bSTART_struct", offsets.finalStructsStart);
+        SanitateBatches.SetInt("bCOUNT_struct", offsets.intermediateStructCounter);
+        SanitateBatches.SetInt("bSTART_struct", offsets.intermediateStructStart);
         SanitateBatches.SetInt("connectRadius", jigsaw.MaxConnectionDist);
         Structure.Generator.SetStructIDSettings(SanitateBatches);
 
@@ -208,109 +155,98 @@ public static class Generator {
         SanitateBatches.SetBuffer(kernel, "anchors", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "anchorPaths", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
-        SanitateBatches.SetBuffer(kernel, "overlapLines", UtilityBuffers.GenerationBuffer);
-        SanitateBatches.SetBuffer(kernel, "batchLines", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetBuffer(kernel, "SocketCaps", UtilityBuffers.GenerationBuffer);
-        SanitateBatches.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
-        SanitateBatches.SetBuffer(kernel, "binList", UtilityBuffers.GenerationBuffer);
         SanitateBatches.SetInt("oCellOffset", originOffset);
-        SanitateBatches.SetInt("bSTEP_batch", batchStep);
-        SanitateBatches.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
+        SanitateBatches.SetInt("capCapacity", capSectionCapacity);
         SanitateBatches.SetInt("bSTART_capCounts", offsets.batchSocketCapCounter);
-        SanitateBatches.SetInt("bSTART_batch", offsets.batchPathStart);
         SanitateBatches.SetInt("bSTART_caps", offsets.batchSocketCapStart);
-        SanitateBatches.SetInt("bCOUNT_binList", offsets.binListCounter);
-        SanitateBatches.SetInt("bSTART_binHeads", offsets.binHeadsStart);
-        SanitateBatches.SetInt("bSTART_binList", offsets.binListStart);
-        SanitateBatches.SetInt("binSize", binSize);
 
         kernel = StructurePathfinder.FindKernel("BatchPathfind");
-        StructurePathfinder.SetBuffer(kernel, "overlapLines", UtilityBuffers.GenerationBuffer);
-        StructurePathfinder.SetBuffer(kernel, "batchLines", UtilityBuffers.GenerationBuffer);
-        StructurePathfinder.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        StructurePathfinder.SetBuffer(kernel, "batchRanges", UtilityBuffers.GenerationBuffer);
+        StructurePathfinder.SetBuffer(kernel, "batchPathList", UtilityBuffers.GenerationBuffer);
         StructurePathfinder.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
         StructurePathfinder.SetBuffer(kernel, "anchors", UtilityBuffers.GenerationBuffer);
         StructurePathfinder.SetBuffer(kernel, "anchorPaths", UtilityBuffers.GenerationBuffer);
         StructurePathfinder.SetBuffer(kernel, "batchVisit", UtilityBuffers.GenerationBuffer);
         StructurePathfinder.SetBuffer(kernel, "pathMeet", UtilityBuffers.GenerationBuffer);
         StructurePathfinder.SetBuffer(kernel, "frontierBuffer", UtilityBuffers.GenerationBuffer);
-        StructurePathfinder.SetBuffer(kernel, "frontierPrefix", UtilityBuffers.GenerationBuffer);
-        StructurePathfinder.SetInt("bSTEP_batch", batchStep);
-        StructurePathfinder.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
-        StructurePathfinder.SetInt("bSTART_batch", offsets.batchPathStart);
+        StructurePathfinder.SetBuffer(kernel, "pathPrefix", UtilityBuffers.GenerationBuffer);
+        StructurePathfinder.SetInt("bSTART_batchPathList", offsets.batchPathStart);
+        StructurePathfinder.SetInt("bSTART_batchRanges", offsets.batchRangesStart);
         StructurePathfinder.SetInt("bSTART_endpts", offsets.pathEndsStart);
         StructurePathfinder.SetInt("bSTART_paths", offsets.anchorPathStart);
         StructurePathfinder.SetInt("bSTART_anchors", offsets.anchorsStart);
         StructurePathfinder.SetInt("bSTART_visited", offsets.batchVistStart);
         StructurePathfinder.SetInt("bSTART_pathMeet", offsets.pathMeetStart);
         StructurePathfinder.SetInt("bSTART_frontier", offsets.frontierStart);
-        StructurePathfinder.SetInt("bSTART_frontierPrefix", offsets.frontierPrefixStart);
+        StructurePathfinder.SetInt("bSTART_pathPrefix", offsets.pathPrefixStart);
         Structure.Generator.SetStructIDSettings(StructurePathfinder);
         
         StructurePathfinder.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
-        StructurePathfinder.SetBuffer(kernel, "counters1", UtilityBuffers.GenerationBuffer);
-        StructurePathfinder.SetInt("bCOUNT_struct", offsets.finalStructsCounter);
-        StructurePathfinder.SetInt("bSTART_struct", offsets.finalStructsStart);
+        StructurePathfinder.SetInt("bCOUNT_struct", offsets.intermediateStructCounter);
+        StructurePathfinder.SetInt("bSTART_struct", offsets.intermediateStructStart);
 
-        kernel = ComputeBatchSetup.FindKernel("SectionGrid");
-        ComputeBatchSetup.SetBuffer(kernel, "batchVisit", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "binClosest", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "binList", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "frontierPrefix", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetInt("bSTART_visited", offsets.batchVistStart);
-        ComputeBatchSetup.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
-        ComputeBatchSetup.SetInt("bSTART_endpts", offsets.pathEndsStart);
-        ComputeBatchSetup.SetInt("bSTEP_batch", batchStep);
-        ComputeBatchSetup.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
-        ComputeBatchSetup.SetInt("bSTART_batch", offsets.batchPathStart);
-        ComputeBatchSetup.SetInt("bSTART_frontierPrefix", offsets.frontierPrefixStart);
-        ComputeBatchSetup.SetInt("bCOUNT_binList", offsets.binListCounter);
-        ComputeBatchSetup.SetInt("bSTART_binHeads", offsets.binHeadsStart);
-        ComputeBatchSetup.SetInt("bSTART_binClosest", offsets.binClosestStart);
-        ComputeBatchSetup.SetInt("bSTART_binList", offsets.binListStart);
-        ComputeBatchSetup.SetInt("oCellOffset", originOffset);
+        int pathfindKernel = StructurePathfinder.FindKernel("BatchPathfind");
+        StructurePathfinder.GetKernelThreadGroupSizes(pathfindKernel, out _, out _, out _);
 
-        kernel = ComputeBatchSetup.FindKernel("BuildFrontierPrefix");
-        ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "frontierPrefix", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "batchLines", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
-        ComputeBatchSetup.SetInt("bSTART_frontierPrefix", offsets.frontierPrefixStart);
+        int backtrackKernel = PathSetupRetriever.FindKernel("BacktrackGridPath");
+        PathSetupRetriever.GetKernelThreadGroupSizes(backtrackKernel, out uint backtrackThreadsX, out _, out _);
 
-        kernel = ComputeBatchSetup.FindKernel("InitBins");
-        ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "binClosest", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetInt("binSize", binSize);
-        ComputeBatchSetup.SetInt("connectRadius", jigsaw.MaxConnectionDist);
+        // BatchPathfind indexes paths by SV_GroupID.x, so it is one path per workgroup by design.
+        plannerPathfindDispatchDivisor = 1;
+        plannerBacktrackDispatchDivisor = Mathf.Max(1, (int)backtrackThreadsX);
 
-        kernel = ComputeBatchSetup.FindKernel("BuildBinClosest");
-        ComputeBatchSetup.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
-        ComputeBatchSetup.SetBuffer(kernel, "binClosest", UtilityBuffers.GenerationBuffer);
+        kernel = PathBatchPlanner.FindKernel("CountPathSizes");
+        PathBatchPlanner.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetBuffer(kernel, "pathPrefix", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
+        PathBatchPlanner.SetInt("bSTART_endpts", offsets.pathEndsStart);
+        PathBatchPlanner.SetInt("bSTART_pathPrefix", offsets.pathPrefixStart);
+
+        kernel = PathBatchPlanner.FindKernel("FinalizePathPlanner");
+        PathBatchPlanner.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetBuffer(kernel, "pathPrefix", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetBuffer(kernel, "batchPrefix", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetBuffer(kernel, "batchRanges", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetBuffer(kernel, "dispatchArgs", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetBuffer(kernel, "batchPathList", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
+        PathBatchPlanner.SetInt("bSTART_pathPrefix", offsets.pathPrefixStart);
+        PathBatchPlanner.SetInt("bSTART_batchPrefix", offsets.batchPrefixStart);
+        PathBatchPlanner.SetInt("bSTART_batchRanges", offsets.batchRangesStart);
+        PathBatchPlanner.SetInt("bSTART_dispatchArgs", offsets.batchDispatchArgsStart);
+        PathBatchPlanner.SetInt("bSTART_batchPathList", offsets.batchPathStart);
+        PathBatchPlanner.SetInt("maxBatchCount", offsets.maxBatchesPerChunk);
+        PathBatchPlanner.SetInt("pathfindDispatchDivisor", plannerPathfindDispatchDivisor);
+        PathBatchPlanner.SetInt("backtrackDispatchDivisor", plannerBacktrackDispatchDivisor);
+
+        kernel = PathBatchPlanner.FindKernel("ClearVisitedPathIds");
+        PathBatchPlanner.SetBuffer(kernel, "batchVisit", UtilityBuffers.GenerationBuffer);
+        PathBatchPlanner.SetInt("bSTART_visited", offsets.batchVistStart);
 
         kernel = PathSetupRetriever.FindKernel("BacktrackGridPath");
-        PathSetupRetriever.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        PathSetupRetriever.SetBuffer(kernel, "batchRanges", UtilityBuffers.GenerationBuffer);
+        PathSetupRetriever.SetBuffer(kernel, "batchPathList", UtilityBuffers.GenerationBuffer);
+        PathSetupRetriever.SetBuffer(kernel, "pathPrefix", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "batchVisit", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "endPoints", UtilityBuffers.GenerationBuffer);
-        PathSetupRetriever.SetBuffer(kernel, "batchLines", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "SocketCaps", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
+        PathSetupRetriever.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "anchorPaths", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "anchors", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "pathMeet", UtilityBuffers.GenerationBuffer);
+        PathSetupRetriever.SetInt("bSTART_batchPathList", offsets.batchPathStart);
+        PathSetupRetriever.SetInt("bSTART_batchRanges", offsets.batchRangesStart);
+        PathSetupRetriever.SetInt("bSTART_pathPrefix", offsets.pathPrefixStart);
         PathSetupRetriever.SetInt("bSTART_capCounts", offsets.batchSocketCapCounter);
-        PathSetupRetriever.SetInt("bCOUNT_struct", offsets.finalStructsCounter);
-        PathSetupRetriever.SetInt("bSTART_struct", offsets.finalStructsStart);
+        PathSetupRetriever.SetInt("bCOUNT_struct", offsets.intermediateStructCounter);
+        PathSetupRetriever.SetInt("bSTART_struct", offsets.intermediateStructStart);
         PathSetupRetriever.SetInt("bSTART_caps", offsets.batchSocketCapStart);
         PathSetupRetriever.SetInt("bSTART_paths", offsets.anchorPathStart);
         PathSetupRetriever.SetInt("bSTART_anchors", offsets.anchorsStart);
-        PathSetupRetriever.SetInt("bSTEP_batch", batchStep);
-        PathSetupRetriever.SetInt("bSTART_batch", offsets.batchPathStart);
-        PathSetupRetriever.SetInt("bSTART_batchCounts", offsets.batchPathCounter);
+        PathSetupRetriever.SetInt("capCapacity", capSectionCapacity);
         PathSetupRetriever.SetInt("bSTART_visited", offsets.batchVistStart);
         PathSetupRetriever.SetInt("bSTART_endpts", offsets.pathEndsStart);
         PathSetupRetriever.SetInt("bSTART_pathMeet", offsets.pathMeetStart);
@@ -318,12 +254,77 @@ public static class Generator {
 
         kernel = PathSetupRetriever.FindKernel("CapDanglingSockets");
         PathSetupRetriever.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
-        PathSetupRetriever.SetBuffer(kernel, "batchVisit", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "SocketCaps", UtilityBuffers.GenerationBuffer);
         PathSetupRetriever.SetBuffer(kernel, "genStructures", UtilityBuffers.GenerationBuffer);
+        PathSetupRetriever.SetBuffer(kernel, "danglingDepths", UtilityBuffers.GenerationBuffer);
+        PathSetupRetriever.SetInt("bSTART_danglingDepths", offsets.danglingDepthsStart);
+
+        kernel = StructurePostProcess.FindKernel("InitStructurePruneState");
+        StructurePostProcess.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetInt("bCOUNT_final", offsets.finalStructsCounter);
+        StructurePostProcess.SetInt("bCOUNT_binList", offsets.binListCounter);
+        StructurePostProcess.SetInt("bSTART_binHeads", offsets.binHeadsStart);
+        StructurePostProcess.SetInt("chunkSize", rSettings.mapChunkSize);
+        StructurePostProcess.SetInt("binSize", jigsaw.StructureColoringBinSize);
+
+        kernel = StructurePostProcess.FindKernel("InitDepthTables");
+        StructurePostProcess.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "maxDepths", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "danglingDepths", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
+        StructurePostProcess.SetInt("bSTART_capCounts", offsets.batchSocketCapCounter);
+        StructurePostProcess.SetInt("capCapacity", capSectionCapacity);
+        StructurePostProcess.SetInt("bSTART_maxDepths", offsets.maxDepthsStart);
+        StructurePostProcess.SetInt("bSTART_danglingDepths", offsets.danglingDepthsStart);
+
+        kernel = StructurePostProcess.FindKernel("BuildStructureBins");
+        StructurePostProcess.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "intermediateStructures", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "binList", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetInt("bCOUNT_intermediate", offsets.intermediateStructCounter);
+        StructurePostProcess.SetInt("bCOUNT_binList", offsets.binListCounter);
+        StructurePostProcess.SetInt("bSTART_intermediate", offsets.intermediateStructStart);
+        StructurePostProcess.SetInt("bSTART_binHeads", offsets.binHeadsStart);
+        StructurePostProcess.SetInt("bSTART_binList", offsets.binListStart);
+        StructurePostProcess.SetInt("oCellOffset", originOffset);
+
+        kernel = StructurePostProcess.FindKernel("CalculateMinDepths");
+        StructurePostProcess.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "intermediateStructures", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "binHeads", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "binList", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "maxDepths", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "danglingDepths", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
+        StructurePostProcess.SetInt("bCOUNT_intermediate", offsets.intermediateStructCounter);
+        StructurePostProcess.SetInt("bSTART_capCounts", offsets.batchSocketCapCounter);
+        StructurePostProcess.SetInt("capCapacity", capSectionCapacity);
+        StructurePostProcess.SetInt("bSTART_intermediate", offsets.intermediateStructStart);
+        StructurePostProcess.SetInt("bSTART_binHeads", offsets.binHeadsStart);
+        StructurePostProcess.SetInt("bSTART_binList", offsets.binListStart);
+        StructurePostProcess.SetInt("bSTART_maxDepths", offsets.maxDepthsStart);
+        StructurePostProcess.SetInt("bSTART_danglingDepths", offsets.danglingDepthsStart);
+
+        kernel = StructurePostProcess.FindKernel("EmitFinalStructures");
+        StructurePostProcess.SetBuffer(kernel, "counters", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "intermediateStructures", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "finalStructures", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "maxDepths", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetBuffer(kernel, "danglingDepths", UtilityBuffers.GenerationBuffer);
+        StructurePostProcess.SetInt("bCOUNT_paths", offsets.anchorPathCounter);
+        StructurePostProcess.SetInt("bCOUNT_intermediate", offsets.intermediateStructCounter);
+        StructurePostProcess.SetInt("bCOUNT_final", offsets.finalStructsCounter);
+        StructurePostProcess.SetInt("bSTART_capCounts", offsets.batchSocketCapCounter);
+        StructurePostProcess.SetInt("capCapacity", capSectionCapacity);
+        StructurePostProcess.SetInt("bSTART_intermediate", offsets.intermediateStructStart);
+        StructurePostProcess.SetInt("bSTART_final", offsets.finalStructsStart);
+        StructurePostProcess.SetInt("bSTART_maxDepths", offsets.maxDepthsStart);
+        StructurePostProcess.SetInt("bSTART_danglingDepths", offsets.danglingDepthsStart);
+        Structure.Generator.SetStructIDSettings(StructurePostProcess);
         Structure.Generator.SetStructIDSettings(PathSetupRetriever);
-        Shader.SetGlobalInt("_StructTestDot", Config.CURRENT.Generation.Structures.value.   StructureDictionary.RetrieveIndex("Dot"));
-        Shader.SetGlobalInt("_StructTestDot1", Config.CURRENT.Generation.Structures.value.StructureDictionary.RetrieveIndex("Dot1"));
+        Shader.SetGlobalInt("_StructTestDot", Config.CURRENT.Generation.Structures.value.StructureDictionary.RetrieveIndex("Dot"));
     }
 
     public static bool PlanStructureSystems(int chunkSize, int depth, int3 CCoord) {
@@ -339,7 +340,9 @@ public static class Generator {
         SampleSystemAnchors(chunkSize, depth, CCoord);
         ConnectGraphAnchors(chunkSize, depth, CCoord);
         SanitateComputeBatches(chunkSize, depth, CCoord);
+        PreparePathPlannerBatches();
         PopulatePathsWithStructures(chunkSize, depth, CCoord);
+        PruneIntersectionsAndEmitFinalStructures(chunkSize, depth, CCoord);
 
         UtilityBuffers.CopyBufferRegion(
             Generator.offsets.finalStructsCounter,
@@ -348,60 +351,14 @@ public static class Generator {
             Structure.Generator.offsets.structureStart,
             Creator.STRUCTURE_STRIDE_WORD
         );
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-        //LogCopiedStructureRegion();
-#endif
         return true;
     }
-
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-    private const int GEN_STRUCT_WORD = 4;
-    private const int PATH_MEET_WORD = 2;
-
-    private static int ReadCounterValue(int counterOffset) {
-        UtilityBuffers.CopyCount(UtilityBuffers.GenerationBuffer, UtilityBuffers.TransferBuffer, counterOffset, 0);
-        UtilityBuffers.TransferBuffer.GetData(_counterReadback, 0, 0, 1);
-        return _counterReadback[0];
-    }
-
-    private static void ReadBufferRegion(int start, int length, int[] destination) {
-        UtilityBuffers.GenerationBuffer.GetData(destination, 0, start, length);
-    }
-
-    private static int3 DecodeRotMeta(uint rotMeta) {
-        return new int3(
-            (int)((rotMeta >> 2) & 0x3u),
-            (int)(rotMeta & 0x3u),
-            (int)((rotMeta >> 4) & 0x3u)
-        );
-    }
-
-    private static int CalculateBatchEntryCapacity(int batchSize) {
-        int cellsPerAxis = Mathf.CeilToInt((float)batchSize / jigsaw.CellSize);
-        return cellsPerAxis * cellsPerAxis * cellsPerAxis * 6;
-    }
-
-    private static int CountMeetPaths(int pathCount) {
-        if (pathCount <= 0)
-            return 0;
-        int[] meetData = new int[pathCount * PATH_MEET_WORD];
-        ReadBufferRegion(offsets.pathMeetStart * PATH_MEET_WORD, meetData.Length, meetData);
-        int meetCount = 0;
-        for (int i = 0; i < pathCount; i++) {
-            int baseWord = i * PATH_MEET_WORD;
-            if (meetData[baseWord] != -1)
-                meetCount++;
-        }
-        return meetCount;
-    }
-
-#endif
-
 
     public static void SampleSystemAnchors(int chunkSize, int depth, int3 CCoord) {
         int worldChunkSize = chunkSize * (1 << depth);
         int paddedChunkSize = worldChunkSize + jigsaw.MaxConnectionDist * 4;
-        int cellsPerChunk = worldChunkSize / jigsaw.CellSize;
+
+        int cellsPerChunk = chunkSize / jigsaw.CellSize;
         int numCellsPerAxis = Mathf.CeilToInt((float)paddedChunkSize / jigsaw.CellSize);
         AnchorSampler.SetInts("oCCoord", new int[] {CCoord.x, CCoord.y, CCoord.z});
         AnchorSampler.SetInt("cellsPerChunk", cellsPerChunk);
@@ -420,7 +377,8 @@ public static class Generator {
     public static void ConnectGraphAnchors(int chunkSize, int depth, int3 CCoord) {
         int worldChunkSize = chunkSize * (1 << depth);
         int paddedChunkSize = worldChunkSize + jigsaw.MaxConnectionDist * 4;
-        int cellsPerChunk = worldChunkSize / jigsaw.CellSize;
+
+        int cellsPerChunk = chunkSize / jigsaw.CellSize;
         int numCellsPerAxis = Mathf.CeilToInt((float)paddedChunkSize / jigsaw.CellSize);
         GraphConnector.SetInts("oCCoord", new int[] {CCoord.x, CCoord.y, CCoord.z});
         GraphConnector.SetInt("cellsPerChunk", cellsPerChunk);
@@ -440,19 +398,9 @@ public static class Generator {
     }
 
     public static void SanitateComputeBatches(int chunkSize, int depth, int3 CCoord) {
+        UtilityBuffers.SetSampleData(SanitateBatches, (float3)(CCoord * chunkSize), 1);
         chunkSize *= 1 << depth;
         chunkSize += jigsaw.MaxConnectionDist * 4;
-
-        int batchSize = math.min(chunkSize, jigsaw.MaxBatchSize);
-        int batchStride = batchSize - jigsaw.MaxConnectionDist;
-        int batchesPerAxis = CalculateBatchAxisCount(chunkSize, batchSize, jigsaw.MaxConnectionDist);
-        int batchCapacity = CalculateBatchEntryCapacity(batchSize);
-        int binSize = jigsaw.PathColoringBinSize;
-        int numBinsPerAxis = Mathf.CeilToInt(chunkSize / (float)binSize);
-        int maxCellsPerChunkAxis = Mathf.CeilToInt((float)chunkSize / jigsaw.CellSize);
-        int maxCellsPerChunk = maxCellsPerChunkAxis * maxCellsPerChunkAxis * maxCellsPerChunkAxis;
-        int maxPathsPerChunk = maxCellsPerChunk * 6;
-        int binListCapacity = maxPathsPerChunk * 3;
 
         int kernel = SanitateBatches.FindKernel("SelectAnchorPieces");
         ComputeBuffer args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorDictCounter, kernel);
@@ -462,116 +410,156 @@ public static class Generator {
         args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorPathCounter, kernel);
         SanitateBatches.DispatchIndirect(kernel, args);
 
-        SanitateBatches.SetInt("batchSize", batchSize);
-        SanitateBatches.SetInt("numPointsPerAxis", batchesPerAxis);
+        SanitateBatches.SetInt("numPointsPerAxis", 1);
         SanitateBatches.SetInt("numVoxelsPerChunk", chunkSize);
-        SanitateBatches.SetInt("numBinsPerAxis", numBinsPerAxis);
-        SanitateBatches.SetInt("binListCapacity", binListCapacity);
-
-        ComputeBatchSetup.SetInt("numVoxelsPerChunk", chunkSize);
-        ComputeBatchSetup.SetInt("numBinsPerAxis", numBinsPerAxis);
-        ComputeBatchSetup.SetInt("binListCapacity", binListCapacity);
-
-        kernel = ComputeBatchSetup.FindKernel("InitBins");
-        ComputeBatchSetup.GetKernelThreadGroupSizes(kernel, out uint binThreads, out uint _, out _);
-        int binGroupsPerAxis = Mathf.CeilToInt(numBinsPerAxis / (float)binThreads);
-        ComputeBatchSetup.Dispatch(kernel, binGroupsPerAxis, binGroupsPerAxis, binGroupsPerAxis);
 
         kernel = SanitateBatches.FindKernel("FilterPathBatches");
         args = UtilityBuffers.CountToArgs(SanitateBatches, UtilityBuffers.GenerationBuffer, offsets.anchorPathCounter, kernel);
         SanitateBatches.DispatchIndirect(kernel, args);
+    }
 
-        kernel = ComputeBatchSetup.FindKernel("BuildBinClosest");
-        ComputeBatchSetup.GetKernelThreadGroupSizes(kernel, out binThreads, out _, out _);
-        binGroupsPerAxis = Mathf.CeilToInt(numBinsPerAxis / (float)binThreads);
-        ComputeBatchSetup.Dispatch(kernel, binGroupsPerAxis, binGroupsPerAxis, binGroupsPerAxis);
+    private static void PreparePathPlannerBatches() {
+        PathBatchPlanner.SetInt("maxVisitedNodesPerBatch", offsets.maxVisitedNodesPerBatch);
+        PathBatchPlanner.SetInt("maxPathsPerBatch", offsets.maxPathsPerBatch);
 
-    #if UNITY_EDITOR || DEVELOPMENT_BUILD
-        //LogBatchCounterSaturation("path", offsets.batchPathCounter, batchesPerAxis, batchCapacity, CCoord, depth);
-    #endif
+        int kernel = PathBatchPlanner.FindKernel("CountPathSizes");
+        ComputeBuffer args = UtilityBuffers.CountToArgs(PathBatchPlanner, UtilityBuffers.GenerationBuffer, offsets.anchorPathCounter, kernel);
+        PathBatchPlanner.DispatchIndirect(kernel, args);
+
+        kernel = PathBatchPlanner.FindKernel("FinalizePathPlanner");
+        PathBatchPlanner.Dispatch(kernel, 1, 1, 1);
+    }
+
+    private static void LogAppendBufferRegionCounts(string phase) {
+        const int pathMeetWord = 2;
+
+        int counterStart = offsets.anchorDictCounter;
+        int counterEnd = offsets.binListCounter;
+        int counterLength = counterEnd - counterStart + 1;
+        if (counterLength <= 0)
+            return;
+
+        int[] counters = new int[counterLength];
+        UtilityBuffers.GenerationBuffer.GetData(counters, 0, counterStart, counterLength);
+
+        int anchorDictCount = Mathf.Max(0, counters[offsets.anchorDictCounter - counterStart]);
+        int anchorPathCount = Mathf.Max(0, counters[offsets.anchorPathCounter - counterStart]);
+        int intermediateStructCount = Mathf.Max(0, counters[offsets.intermediateStructCounter - counterStart]);
+        int finalStructCount = Mathf.Max(0, counters[offsets.finalStructsCounter - counterStart]);
+        int socketCapCount = Mathf.Max(0, counters[offsets.batchSocketCapCounter - counterStart]);
+        int binListCount = Mathf.Max(0, counters[offsets.binListCounter - counterStart]);
+        int metPathCount = 0;
+
+        if (anchorPathCount > 0) {
+            uint[] pathMeetData = new uint[anchorPathCount * pathMeetWord];
+            UtilityBuffers.GenerationBuffer.GetData(pathMeetData, 0, offsets.pathMeetStart * pathMeetWord, pathMeetData.Length);
+            for (int pathIndex = 0; pathIndex < anchorPathCount; pathIndex++) {
+                uint meetIndex = pathMeetData[pathIndex * pathMeetWord];
+                if (meetIndex != uint.MaxValue)
+                    metPathCount++;
+            }
+        }
+
+        Debug.Log(//
+            $"{phase} append buffer counts: " +
+            $"anchorDict={anchorDictCount}, " +
+            $"anchorPaths={anchorPathCount}, " +
+            $"metPaths={metPathCount}/{anchorPathCount}, " +
+            $"intermediateStructures={intermediateStructCount}, " +
+            $"finalStructures={finalStructCount}, " +
+            $"socketCaps={socketCapCount}, " +
+            $"binList={binListCount}"
+        );
     }
 
     public static void PopulatePathsWithStructures(int chunkSize, int depth, int3 CCoord) {
         int worldChunkSize = chunkSize * (1 << depth);
         worldChunkSize += jigsaw.MaxConnectionDist * 4;
 
-        int batchSize = math.min(worldChunkSize, jigsaw.MaxBatchSize);
-        int batchStride = batchSize - jigsaw.MaxConnectionDist;
-        int batchesPerAxis = CalculateBatchAxisCount(worldChunkSize, batchSize, jigsaw.MaxConnectionDist);
-        int batchCapacity = CalculateBatchEntryCapacity(batchSize);
-        int originOffset = -(jigsaw.MaxConnectionDist * 2);
-        int binSize = jigsaw.PathColoringBinSize;
+        int plannerBatchCount = offsets.maxBatchesPerChunk;
+        UtilityBuffers.SetSampleData(PathSetupRetriever, (float3)(CCoord * chunkSize), 1);
+        UtilityBuffers.SetSampleData(StructurePathfinder, (float3)(CCoord * chunkSize), 1);
+        PathSetupRetriever.SetInt("numPointsPerAxis", worldChunkSize);
+        StructurePathfinder.SetInt("numPointsPerAxis", worldChunkSize);
+        PathSetupRetriever.SetInt("numVoxelsPerChunk", worldChunkSize);
+        StructurePathfinder.SetInt("numVoxelsPerChunk", worldChunkSize);
+
+        int kernel = PathBatchPlanner.FindKernel("ClearVisitedPathIds");
+        PathBatchPlanner.SetInt("clearNodeCount", offsets.maxVisitedNodesPerBatch);
+        PathBatchPlanner.GetKernelThreadGroupSizes(kernel, out uint clearThreads, out uint _, out _);
+        int clearGroups = Mathf.CeilToInt(offsets.maxVisitedNodesPerBatch / (float)clearThreads);
+        PathBatchPlanner.Dispatch(kernel, clearGroups, 1, 1);
+        
+        
+        for (int index = 0; index < plannerBatchCount; index++) {
+            kernel = StructurePathfinder.FindKernel("BatchPathfind");
+            StructurePathfinder.SetInt("batchIndex", index);
+            uint pathArgsOffsetBytes = GetPlannerDispatchArgsOffsetBytes(index, 0);
+            StructurePathfinder.DispatchIndirect(kernel, UtilityBuffers.GenerationBuffer, pathArgsOffsetBytes);
+            
+            kernel = PathSetupRetriever.FindKernel("BacktrackGridPath");
+            PathSetupRetriever.SetInt("batchIndex", index);
+            uint backtrackArgsOffsetBytes = GetPlannerDispatchArgsOffsetBytes(index, 1);
+            PathSetupRetriever.DispatchIndirect(kernel, UtilityBuffers.GenerationBuffer, backtrackArgsOffsetBytes);
+        }
+
+        /*kernel = PathSetupRetriever.FindKernel("CapDanglingSockets");
+        ComputeBuffer capArgs = UtilityBuffers.CountToArgs(PathSetupRetriever, UtilityBuffers.GenerationBuffer, offsets.batchSocketCapCounter, kernel);
+        PathSetupRetriever.DispatchIndirect(kernel, capArgs);*/
+        //
+        //LogAppendBufferRegionCounts("PopulatePathsWithStructures");
+    }
+
+    private static void PruneIntersectionsAndEmitFinalStructures(int chunkSize, int depth, int3 CCoord) {
+        int worldChunkSize = chunkSize * (1 << depth);
+        worldChunkSize += jigsaw.MaxConnectionDist * 4;
+
+        int binSize = jigsaw.StructureColoringBinSize;
         int numBinsPerAxis = Mathf.CeilToInt(worldChunkSize / (float)binSize);
         int maxCellsPerChunkAxis = Mathf.CeilToInt((float)worldChunkSize / jigsaw.CellSize);
         int maxCellsPerChunk = maxCellsPerChunkAxis * maxCellsPerChunkAxis * maxCellsPerChunkAxis;
         int maxPathsPerChunk = maxCellsPerChunk * 6;
         int binListCapacity = maxPathsPerChunk * 3;
-        UtilityBuffers.SetSampleData(PathSetupRetriever, (float3)(CCoord * chunkSize), 1);
-        UtilityBuffers.SetSampleData(StructurePathfinder, (float3)(CCoord * chunkSize), 1);
-        PathSetupRetriever.SetInt("numPointsPerAxis", batchSize);
-        StructurePathfinder.SetInt("numPointsPerAxis", batchSize);
-        ComputeBatchSetup.SetInt("numPointsPerAxis", batchSize);
-        PathSetupRetriever.SetInt("numVoxelsPerChunk", worldChunkSize);
-        StructurePathfinder.SetInt("numVoxelsPerChunk", worldChunkSize);
-        ComputeBatchSetup.SetInt("numVoxelsPerChunk", worldChunkSize);
-        PathSetupRetriever.SetInt("batchSize", batchSize);
-        StructurePathfinder.SetInt("batchSize", batchSize);
-        ComputeBatchSetup.SetInt("numBinsPerAxis", numBinsPerAxis);
-        ComputeBatchSetup.SetInt("binListCapacity", binListCapacity);
-        
-        ComputeBuffer args;
-        //int totalAnchors = ReadCounterValue(offsets.anchorDictCounter);
-        //int batchPaths = 0;
 
-        for (int x = 0; x < batchesPerAxis; x++) {
-        for (int y = 0; y < batchesPerAxis; y++) {
-        for (int z = 0; z < batchesPerAxis; z++) {
-            int index = CustomUtility.indexFromCoord(x,y,z, batchesPerAxis);
-            int3 batchOffset = new int3(x,y,z) * batchStride + originOffset;
+        StructurePostProcess.SetInt("numVoxelsPerChunk", worldChunkSize);
+        StructurePostProcess.SetInt("numBinsPerAxis", numBinsPerAxis);
+        StructurePostProcess.SetInt("binListCapacity", binListCapacity);
+        StructurePostProcess.SetInts("oCCoord", new int[] { CCoord.x, CCoord.y, CCoord.z });
 
-            int kernel = ComputeBatchSetup.FindKernel("SectionGrid");
-            ComputeBatchSetup.GetKernelThreadGroupSizes(kernel, out uint sectionGridThreads, out uint _, out _);
-            int numGroupsPerAxis = Mathf.CeilToInt(batchSize / (float)sectionGridThreads);
-            ComputeBatchSetup.SetInt("batchIndex", index);
-            ComputeBatchSetup.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
-            ComputeBatchSetup.Dispatch(kernel, numGroupsPerAxis, numGroupsPerAxis, numGroupsPerAxis);
+        int kernel = StructurePostProcess.FindKernel("InitStructurePruneState");
+        StructurePostProcess.GetKernelThreadGroupSizes(kernel, out uint binThreads, out uint _, out _);
+        int binGroupsPerAxis = Mathf.CeilToInt(numBinsPerAxis / (float)binThreads);
+        StructurePostProcess.Dispatch(kernel, binGroupsPerAxis, binGroupsPerAxis, binGroupsPerAxis);
 
-            kernel = ComputeBatchSetup.FindKernel("BuildFrontierPrefix");
-            ComputeBatchSetup.SetInt("batchIndex", index);
-            ComputeBatchSetup.Dispatch(kernel, 1, 1, 1);
-            
-            //batchPaths += ReadCounterValue(offsets.batchPathCounter + index);
-            kernel = StructurePathfinder.FindKernel("BatchPathfind");
-            StructurePathfinder.SetInt("batchIndex", index);
-            StructurePathfinder.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
-            // BatchPathfind consumes one whole thread group per path and uses groupId.x as the path slot.
-            args = UtilityBuffers.CountToArgs(1, UtilityBuffers.GenerationBuffer, offsets.batchPathCounter + index);
-            StructurePathfinder.DispatchIndirect(kernel, args);
-            
-            kernel = PathSetupRetriever.FindKernel("BacktrackGridPath");
-            args = UtilityBuffers.CountToArgs(PathSetupRetriever, UtilityBuffers.GenerationBuffer, offsets.batchPathCounter + index, kernel);
-            PathSetupRetriever.SetInt("batchIndex", index);
-            PathSetupRetriever.SetInts("batchOffset", new int[] {batchOffset.x, batchOffset.y, batchOffset.z});
-            PathSetupRetriever.DispatchIndirect(kernel, args);
+        kernel = StructurePostProcess.FindKernel("InitDepthTables");
+        ComputeBuffer args = UtilityBuffers.CountToArgs(StructurePostProcess, UtilityBuffers.GenerationBuffer, offsets.anchorPathCounter, kernel);
+        StructurePostProcess.DispatchIndirect(kernel, args);
 
-            /*kernel = PathSetupRetriever.FindKernel("CapDanglingSockets");
-            args = UtilityBuffers.CountToArgs(PathSetupRetriever, UtilityBuffers.GenerationBuffer, offsets.batchSocketCapCounter + index, kernel);
-            PathSetupRetriever.DispatchIndirect(kernel, args);*/
-        }}}
+        kernel = StructurePostProcess.FindKernel("BuildStructureBins");
+        args = UtilityBuffers.CountToArgs(StructurePostProcess, UtilityBuffers.GenerationBuffer, offsets.intermediateStructCounter, kernel);
+        StructurePostProcess.DispatchIndirect(kernel, args);
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
-    //LogBatchCounterSaturation("cap", offsets.batchSocketCapCounter, batchesPerAxis, batchCapacity, CCoord, depth);
-#endif
+        kernel = StructurePostProcess.FindKernel("CalculateMinDepths");
+        args = UtilityBuffers.CountToArgs(StructurePostProcess, UtilityBuffers.GenerationBuffer, offsets.intermediateStructCounter, kernel);
+        StructurePostProcess.DispatchIndirect(kernel, args);
+
+        kernel = StructurePostProcess.FindKernel("EmitFinalStructures");
+        args = UtilityBuffers.CountToArgs(StructurePostProcess, UtilityBuffers.GenerationBuffer, offsets.intermediateStructCounter, kernel);
+        StructurePostProcess.DispatchIndirect(kernel, args);
     }
 
     public struct SSystemOffsets : BufferOffsets {
         public int anchorDictCounter;
         public int anchorPathCounter;
+        public int intermediateStructCounter;
         public int finalStructsCounter;
-        public int batchPathCounter;
         public int batchSocketCapCounter;
         public int binListCounter;
         public int2 countersRange;
+        public int maxBatchesPerChunk;
+        public int maxVisitedNodesPerBatch;
+        public int maxCapsPerBatch;
+        public int maxPathsPerBatch;
 
         public int anchorsStart;
         public int anchorDictStart;
@@ -582,11 +570,16 @@ public static class Generator {
         public int batchPathStart;
         public int batchSocketCapStart;
         public int batchVistStart;
-        public int frontierPrefixStart;
         public int frontierStart;
+        public int pathPrefixStart;
+        public int batchPrefixStart;
+        public int batchDispatchArgsStart;
+        public int batchRangesStart;
         public int binHeadsStart;
-        public int binClosestStart;
         public int binListStart;
+        public int intermediateStructStart;
+        public int maxDepthsStart;
+        public int danglingDepthsStart;
         public int finalStructsStart;
 
         private int offsetStart; private int offsetEnd;
@@ -606,44 +599,96 @@ public static class Generator {
         const int PATH_INDEX_WORD = 1;
         const int STRUCT_SOCKET_WORD = 3;
         const int VISITED_NODE_WORD = 2;
-        const int FRONTIER_PREFIX_WORD = 1;
         const int FRONTIER_NODE_WORD = 1;
+        const int PATH_PREFIX_WORD = 3;
+        const int BATCH_PREFIX_WORD = 2;
+        public const int DISPATCH_ARGS_WORD = 3;
+        public const int BATCH_RANGE_WORD = 2;
+        public const int PLANNER_DISPATCH_ARGS_PER_BATCH = 2;
         const int BIN_HEAD_WORD = 1;
-        const int BIN_CLOSEST_WORD = 2;
-        const int BIN_LIST_NODE_WORD = 3;
+        const int BIN_LIST_NODE_WORD = 2;
 
         const int GEN_STRUCT_WORD = 4;
+        const int GEN_STRUCT_INFO_WORD = 2;
+        const int INTERMEDIATE_STRUCT_WORD = GEN_STRUCT_WORD + GEN_STRUCT_INFO_WORD;
+        const int DEPTH_TABLE_WORD = 1;
+        const int DANGLING_DEPTH_TABLE_WORD = 2;
         const int AVG_STRUCTS_PER_PATH = 3;
+        const int MAX_VISITED_NODES_PER_BATCH = 224 * 224 * 224;
+
+        private static void LogLargestBufferRegions(string[] regionNames, int[] regionWordCounts, int totalWords, int topCount)
+        {
+            int[] topIndices = new int[topCount];
+            for (int i = 0; i < topCount; i++)
+                topIndices[i] = -1;
+
+            for (int regionIndex = 0; regionIndex < regionNames.Length; regionIndex++) {
+                int candidateBytes = regionWordCounts[regionIndex] * sizeof(int);
+                for (int slot = 0; slot < topCount; slot++) {
+                    int existingIndex = topIndices[slot];
+                    int existingBytes = existingIndex >= 0 ? regionWordCounts[existingIndex] * sizeof(int) : -1;
+                    if (candidateBytes > existingBytes) {
+                        for (int shift = topCount - 1; shift > slot; shift--)
+                            topIndices[shift] = topIndices[shift - 1];
+                        topIndices[slot] = regionIndex;
+                        break;
+                    }
+                }
+            }
+
+            string log = $"SSystemOffsets largest {topCount} buffer regions (total {(totalWords * sizeof(int)):N0} bytes):\n";
+            for (int rank = 0; rank < topCount; rank++) {
+                int regionIndex = topIndices[rank];
+                if (regionIndex < 0)
+                    continue;
+
+                int words = regionWordCounts[regionIndex];
+                int bytes = words * sizeof(int);
+                float mb = bytes / (1024f * 1024f);
+                log += $"{rank + 1}. {regionNames[regionIndex]}: {words:N0} words ({bytes:N0} bytes, {mb:F2} MB)\n";
+            }
+
+            Debug.Log(log.TrimEnd());
+        }
 
         //... this buffer is sectioned way too much lol
-        public SSystemOffsets(int maxChunkAxis, int maxPathLength, int batchSize, int cellSize, int binSize, int bufferStart) {
+        public SSystemOffsets(int maxChunkAxis, int maxPathLength, int cellSize, int binSize, int bufferStart) {
             maxChunkAxis += maxPathLength * 4;
-            int maxBatchAxis = CalculateBatchAxisCount(maxChunkAxis, batchSize, maxPathLength);
             int maxCellsPerChunkAxis = Mathf.CeilToInt((float)maxChunkAxis / cellSize);
-            int maxCellsPerBatchAxis = Mathf.CeilToInt((float)batchSize / cellSize);
             int maxBinsPerAxis = Mathf.CeilToInt((float)maxChunkAxis / binSize);
 
-            int maxPointsPerBatch = batchSize * batchSize * batchSize;
-            int maxBatchesPerChunk = maxBatchAxis * maxBatchAxis * maxBatchAxis;
+            maxVisitedNodesPerBatch = MAX_VISITED_NODES_PER_BATCH;
+            long estimatedPathVisitedNodes = Math.Max(1L, (long)maxPathLength * maxPathLength * maxPathLength);
+
             int maxCellsPerChunk = maxCellsPerChunkAxis * maxCellsPerChunkAxis * maxCellsPerChunkAxis;
-            int maxCellsPerBatch = maxCellsPerBatchAxis * maxCellsPerBatchAxis * maxCellsPerBatchAxis;
-            int maxPathsPerBatch = maxCellsPerBatch * 6;
             int maxPathsPerChunk = maxCellsPerChunk * 6;
+            this.maxPathsPerBatch = Mathf.Max(1, (int)Math.Min((long)maxPathsPerChunk, MAX_VISITED_NODES_PER_BATCH / estimatedPathVisitedNodes));
+            this.maxBatchesPerChunk = Mathf.Max(1, Mathf.CeilToInt(maxPathsPerChunk / (float)Mathf.Max(maxPathsPerBatch, 1)));
+            maxCapsPerBatch = maxPathsPerBatch;
+            int maxCapsPerChunk = maxBatchesPerChunk * maxCapsPerBatch;
             int maxBinsPerChunk = maxBinsPerAxis * maxBinsPerAxis * maxBinsPerAxis;
-            int maxBinListNodes = maxPathsPerChunk * 3;
+            int maxIntermediateStructs = maxPathsPerChunk * AVG_STRUCTS_PER_PATH;
+            int maxFinalStructs = maxPathsPerChunk * AVG_STRUCTS_PER_PATH;
+            int maxBinListNodes = maxFinalStructs;
 
             this.offsetStart = bufferStart;
-            anchorDictCounter = 0;
-            anchorPathCounter = 1;
-            finalStructsCounter = 2;
-            batchPathCounter = finalStructsCounter + maxBatchesPerChunk;
-            batchSocketCapCounter = batchPathCounter + maxBatchesPerChunk;
-            binListCounter = batchSocketCapCounter + maxBatchesPerChunk;
+            anchorDictCounter = 0; anchorPathCounter = 1;
+            intermediateStructCounter = 2; finalStructsCounter = 3;
+            batchSocketCapCounter = finalStructsCounter + 1;
+            binListCounter = batchSocketCapCounter + 1;
+            int counterEnd = binListCounter + 1;
+            
+            batchPrefixStart = Mathf.CeilToInt((float)counterEnd / BATCH_PREFIX_WORD);
+            int BatchPrefixEndInd_W = (batchPrefixStart + maxBatchesPerChunk) * BATCH_PREFIX_WORD;
 
-            frontierPrefixStart = binListCounter + 1;
-            int frontierPrefixEnd = frontierPrefixStart + maxPathsPerChunk + 1;
-            int prefixEndInd_W = frontierPrefixEnd * FRONTIER_PREFIX_WORD;
-            countersRange = new (anchorDictCounter, frontierPrefixEnd);
+            batchDispatchArgsStart = BatchPrefixEndInd_W;
+            int BatchDispatchArgsEndInd_W = batchDispatchArgsStart + maxBatchesPerChunk * PLANNER_DISPATCH_ARGS_PER_BATCH * DISPATCH_ARGS_WORD;
+
+            batchRangesStart = Mathf.CeilToInt((float)BatchDispatchArgsEndInd_W / BATCH_RANGE_WORD);
+            int BatchRangesEndInd_W = (batchRangesStart + maxBatchesPerChunk) * BATCH_RANGE_WORD;
+
+            int prefixEndInd_W = BatchRangesEndInd_W;
+            countersRange = new (anchorDictCounter, prefixEndInd_W);
 
             anchorsStart = Mathf.CeilToInt((float)prefixEndInd_W / ANCHOR_STRIDE_WORD);
             int AnchorEndInd_W = (anchorsStart + maxCellsPerChunk) * ANCHOR_STRIDE_WORD;
@@ -651,8 +696,8 @@ public static class Generator {
             anchorDictStart = Mathf.CeilToInt((float)AnchorEndInd_W / ANCHOR_DICT_WORD);
             int AnchorDictEndInd_W = (anchorDictStart + maxCellsPerChunk) * ANCHOR_DICT_WORD;
 
-            socketUsageStart = Mathf.CeilToInt((float)AnchorDictEndInd_W / SOCKET_USAGE_WORD);
-            int SocketUsageEndInd_W = (socketUsageStart + maxCellsPerChunk) * SOCKET_USAGE_WORD;
+            socketUsageStart = AnchorDictEndInd_W;
+            int SocketUsageEndInd_W = socketUsageStart + maxCellsPerChunk * SOCKET_USAGE_WORD;
 
             anchorPathStart = Mathf.CeilToInt((float)SocketUsageEndInd_W / ANCHOR_PATH_WORD);
             int AnchorPathEndInd_W = (anchorPathStart + maxPathsPerChunk) * ANCHOR_PATH_WORD;
@@ -662,31 +707,101 @@ public static class Generator {
 
             pathMeetStart = Mathf.CeilToInt((float)PathEndsEndInd_W / PATH_MEET_WORD);
             int PathMeetEndInd_W = (pathMeetStart + maxPathsPerChunk) * PATH_MEET_WORD;
+            
             batchPathStart = Mathf.CeilToInt((float)PathMeetEndInd_W / PATH_INDEX_WORD);
-            int BatchPathsEndInd_W = (batchPathStart + maxBatchesPerChunk * maxPathsPerBatch) * PATH_INDEX_WORD;
+            int BatchPathsEndInd_W = (batchPathStart + maxPathsPerChunk) * PATH_INDEX_WORD;
 
             //This one is not mathematically accurate upper bound but an estimate
             batchSocketCapStart = Mathf.CeilToInt((float)BatchPathsEndInd_W / STRUCT_SOCKET_WORD); 
             int BatchSocketEndInd_W = (batchSocketCapStart + maxBatchesPerChunk * maxPathsPerBatch) * STRUCT_SOCKET_WORD;
 
             batchVistStart = Mathf.CeilToInt((float)BatchSocketEndInd_W / VISITED_NODE_WORD); 
-            int BatchVisitedEndInd_W = (batchVistStart + maxPointsPerBatch) * VISITED_NODE_WORD;
+            int BatchVisitedEndInd_W = (batchVistStart + maxVisitedNodesPerBatch) * VISITED_NODE_WORD;
 
             frontierStart = Mathf.CeilToInt((float)BatchVisitedEndInd_W / FRONTIER_NODE_WORD);
-            int FrontierEndInd_W = (frontierStart + maxPointsPerBatch) * FRONTIER_NODE_WORD;
+            int FrontierEndInd_W = (frontierStart + maxVisitedNodesPerBatch) * FRONTIER_NODE_WORD;
 
-            binHeadsStart = Mathf.CeilToInt((float)FrontierEndInd_W / BIN_HEAD_WORD);
-            int BinHeadsEndInd_W = (binHeadsStart + maxBinsPerChunk) * BIN_HEAD_WORD;
+            pathPrefixStart = Mathf.CeilToInt((float)FrontierEndInd_W / PATH_PREFIX_WORD);
+            int PathPrefixEndInd_W = (pathPrefixStart + maxPathsPerChunk) * PATH_PREFIX_WORD;
 
-            binClosestStart = Mathf.CeilToInt((float)BinHeadsEndInd_W / BIN_CLOSEST_WORD);
-            int BinClosestEndInd_W = (binClosestStart + maxBinsPerChunk) * BIN_CLOSEST_WORD;
+            // Postprocess bin buffers are only used after pathfinding/planner buffers are no longer needed,
+            // so they can reuse that workspace when capacity allows. Start at batchVisit to reuse
+            // both visited + frontier capacity instead of leaving that region idle.
+            int postProcessBinWorkspaceStart_W = batchVistStart;
+            int candidateBinHeadsStart = Mathf.CeilToInt((float)postProcessBinWorkspaceStart_W / BIN_HEAD_WORD);
+            int candidateBinHeadsEndInd_W = (candidateBinHeadsStart + maxBinsPerChunk) * BIN_HEAD_WORD;
+            int candidateBinListStart = Mathf.CeilToInt((float)candidateBinHeadsEndInd_W / BIN_LIST_NODE_WORD);
+            int candidateBinListEndInd_W = (candidateBinListStart + maxBinListNodes) * BIN_LIST_NODE_WORD;
 
-            binListStart = Mathf.CeilToInt((float)BinClosestEndInd_W / BIN_LIST_NODE_WORD);
-            int BinListEndInd_W = (binListStart + maxBinListNodes) * BIN_LIST_NODE_WORD;
+            binHeadsStart = candidateBinHeadsStart;
+            binListStart = candidateBinListStart;
 
-            finalStructsStart = Mathf.CeilToInt((float)BinListEndInd_W / GEN_STRUCT_WORD);
-            offsetEnd = (finalStructsStart + maxPathsPerChunk * AVG_STRUCTS_PER_PATH) * GEN_STRUCT_WORD;
-            Debug.Log(BinListEndInd_W);
+            // Intermediate structures are produced before pathfinding and consumed again during postprocess,
+            // so they must not overlap any transient pathfinding workspace (visited/frontier/pathPrefix) or bins.
+            int persistentRegionStart_W = Math.Max(Math.Max(BatchRangesEndInd_W, PathPrefixEndInd_W), candidateBinListEndInd_W);
+
+            intermediateStructStart = Mathf.CeilToInt((float)persistentRegionStart_W / INTERMEDIATE_STRUCT_WORD);
+            int IntermediateStructEndInd_W = (intermediateStructStart + maxIntermediateStructs) * INTERMEDIATE_STRUCT_WORD;
+
+            maxDepthsStart = Mathf.CeilToInt((float)IntermediateStructEndInd_W / DEPTH_TABLE_WORD);
+            int MaxDepthsEndInd_W = (maxDepthsStart + maxPathsPerChunk) * DEPTH_TABLE_WORD;
+
+            danglingDepthsStart = Mathf.CeilToInt((float)MaxDepthsEndInd_W / DANGLING_DEPTH_TABLE_WORD);
+            int DanglingDepthsEndInd_W = (danglingDepthsStart + maxCapsPerChunk) * DANGLING_DEPTH_TABLE_WORD;
+
+            finalStructsStart = Mathf.CeilToInt((float)DanglingDepthsEndInd_W / GEN_STRUCT_WORD);
+            offsetEnd = (finalStructsStart + maxFinalStructs) * GEN_STRUCT_WORD;
+
+            string[] regionNames = new string[] {
+                "Counters",
+                "Anchors",
+                "AnchorDict",
+                "SocketUsage",
+                "AnchorPaths",
+                "PathEndpoints",
+                "PathMeet",
+                "BatchPathList",
+                "SocketCaps",
+                "BatchVisited",
+                "Frontier",
+                "PathPrefix",
+                "BatchPrefix",
+                "BatchDispatchArgs",
+                "BatchRanges",
+                "BinHeads",
+                "BinList",
+                "IntermediateStructures",
+                "MaxDepths",
+                "DanglingDepths",
+                "FinalStructures"
+            };
+
+            int[] regionWordCounts = new int[] {
+                counterEnd - anchorDictCounter,
+                maxCellsPerChunk * ANCHOR_STRIDE_WORD,
+                maxCellsPerChunk * ANCHOR_DICT_WORD,
+                maxCellsPerChunk * SOCKET_USAGE_WORD,
+                maxPathsPerChunk * ANCHOR_PATH_WORD,
+                maxPathsPerChunk * PATH_ENDS_WORD,
+                maxPathsPerChunk * PATH_MEET_WORD,
+                maxPathsPerChunk * PATH_INDEX_WORD,
+                maxBatchesPerChunk * maxPathsPerBatch * STRUCT_SOCKET_WORD,
+                maxVisitedNodesPerBatch * VISITED_NODE_WORD,
+                maxVisitedNodesPerBatch * FRONTIER_NODE_WORD,
+                maxPathsPerChunk * PATH_PREFIX_WORD,
+                maxBatchesPerChunk * BATCH_PREFIX_WORD,
+                maxBatchesPerChunk * PLANNER_DISPATCH_ARGS_PER_BATCH * DISPATCH_ARGS_WORD,
+                maxBatchesPerChunk * BATCH_RANGE_WORD,
+                maxBinsPerChunk * BIN_HEAD_WORD,
+                maxBinListNodes * BIN_LIST_NODE_WORD,
+                maxIntermediateStructs * INTERMEDIATE_STRUCT_WORD,
+                maxPathsPerChunk * DEPTH_TABLE_WORD,
+                maxCapsPerChunk * DANGLING_DEPTH_TABLE_WORD,
+                maxFinalStructs * GEN_STRUCT_WORD
+            };
+
+            int topCount = Mathf.Min(6, regionNames.Length);
+            LogLargestBufferRegions(regionNames, regionWordCounts, offsetEnd, topCount);
         }
     }
 }

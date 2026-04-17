@@ -32,20 +32,23 @@ bool VerifyChecks(uint index, uint3 rot, float3 origin) {
     settings structureSettings = _StructureSettings[index];
     float3x3 rotMatrix = RotationLookupTable[rot.y][rot.x][rot.z];
     float3 length = mul(rotMatrix, structureSettings.size);
-    float3 newOrigin = min(length, 0);
+    float3 newOrigin = min(length, 0.0);
 
     uint checkStart = _StructureIndexes[index].y;
     uint checkEnd = _StructureIndexes[index+1].y;
+    bool passedAllChecks = true;
     for(uint checkInd = checkStart; checkInd < checkEnd; checkInd++){
         checkData data = _StructureChecks[checkInd];
         float3 rotatedPos = mul(rotMatrix, data.position);
         float3 transformedPos = rotatedPos - newOrigin;
 
         float3 checkPosition = transformedPos + origin;
-        if(!InBounds(SampleTerrain(checkPosition), data.bounds))
+        if(!InBounds(SampleTerrain(checkPosition), data.bounds)) {
+            passedAllChecks = false;
             break;
+        }
     }
-    return checkInd >= checkEnd;
+    return passedAllChecks;
 }
 
 [numthreads(numThreads,1,1)]
@@ -87,7 +90,7 @@ void SelectAnchorPieces (uint3 id : SV_DispatchThreadID){
         structureData data;
         data.structurePos = self.pos;
         data.meta = PackStctMeta(_SystemStructures[bestStructure].structureIndex, bestRotation);
-        AppendStructure(data);
+        AppendStructureWithInfo(data, PackStructInfo(0u, false, INVALID_OWNER_ID, 0u));
     }
 }
 
@@ -138,74 +141,25 @@ void GetRealEndpoints (uint3 id : SV_DispatchThreadID){
 }
 
 int connectRadius;
-int computeSize;
 
-uint bSTEP_batch;
-uint bSTART_batchCounts;
-
-uint bSTART_batch;
-
-RWStructuredBuffer<int> batchLines;
+uint capCapacity;
 RWStructuredBuffer<uint3> SocketCaps; 
 uint bSTART_capCounts; 
 uint bSTART_caps; 
 
-struct BinLineNode {
-    int prev;
-    int pathId;
-    int batchIndex;
-};//
+bool EnqueueCapShared(uint3 capMeta)
+{
+    int slot;
+    InterlockedAdd(counters[bSTART_capCounts], 1, slot);
+    if ((uint)slot >= capCapacity)
+        return false;
 
-uint bCOUNT_binList;
-uint bSTART_binHeads;
-uint bSTART_binList;
-int binSize;
-int numBinsPerAxis;
-int binListCapacity;
-
-RWStructuredBuffer<int> binHeads;
-RWStructuredBuffer<BinLineNode> binList;
-
-int CeilDiv(int a, int b) {
-    return a >= 0 ? (a + b - 1) / b : a / b;
+    SocketCaps[bSTART_caps + (uint)slot] = capMeta;
+    return true;
 }
 
-void AddPathToBin(int binIndex, int pathId, int batchIndex) {
-    int newIndex;
-    InterlockedAdd(counters[bCOUNT_binList], 1, newIndex);
-    if (newIndex >= binListCapacity)
-        return;
-
-    int oldValue = binHeads[bSTART_binHeads + binIndex];
-    int replaced;
-    [loop]
-    while (true) {
-        InterlockedCompareExchange(binHeads[bSTART_binHeads + binIndex], oldValue, newIndex, replaced);
-        if (replaced == oldValue)
-            break;
-        oldValue = replaced;
-    }
-
-    binList[bSTART_binList + newIndex].prev = oldValue;
-    binList[bSTART_binList + newIndex].pathId = pathId;
-    binList[bSTART_binList + newIndex].batchIndex = batchIndex;
-}
-
-/*
-Batchsize refers to the side length of a single batch.
-Each batch has an overlap of connectRadius with its neighbor.
-The aggregate of batches needs to cover a grid of side length computeSize
-
-The numPointsPerAxis used in indexToCoord describes the amount of batches
-per axis of computeSize, determined by 
-    ⌊(computeSize - batchSize) / (batchSize - connectRadius)⌋ + 1
-    (Derived from Convolution Equation)
-
-The straight line determined by the two endPts of an anchorPaths are of length 
-< connectRadius, meaning they fit entirely within some batch. Determine
-    1. all batches it overlaps and add to counters[bSTART_overlap + index] of that batch
-    2. the one batch it is contained in and add to counters[bSTART_batch + index] of that batch
-*/
+/* Classify each valid path into one containing batch and enqueue it for either
+mainline pathfinding or dangling-socket capping. */
 
 [numthreads(numThreads,1,1)]
 void FilterPathBatches (uint3 id : SV_DispatchThreadID){
@@ -225,21 +179,6 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
 
     if (any(maxPt < -connectRadius) || any(minPt > (numVoxelsPerChunk + connectRadius)))
         return;
-    // Batch b covers [b*stride, b*stride + batchSize - 1] (inclusive).
-    // Overlaps [minPt, maxPt] iff:  b*stride <= maxPt  AND  b*stride + batchSize - 1 >= minPt
-    // => bMin = ceil((minPt - batchSize + 1) / stride) = (minPt - batchSize + stride) / stride
-    // => bMax = floor(maxPt / stride)
-    int stride = batchSize - connectRadius;
-    int3 bMin = max((int3)0, (minPt - batchSize + stride) / stride);
-    int3 bMax = min(numPointsPerAxis - 1, maxPt / stride);
-
-    // Containing batch: floor(minPt / stride).
-    // Proof: b*stride <= minPt by definition, and since |line| < connectRadius = batchSize - stride,
-    //   maxPt < minPt + connectRadius <= b*stride + batchSize, so the whole line fits.
-    int3 bContained = clamp(minPt / stride, (int3)0, numPointsPerAxis - 1);
-    int containedFlat = indexFromCoord(bContained);
-    int containedSlot;
-
     if (IsPartialEnds(ep)) {
         uint3 path = anchorPaths[id.x + bSTART_paths];
         uint2 dirs = GetFaceDirs(path.z);
@@ -248,36 +187,7 @@ void FilterPathBatches (uint3 id : SV_DispatchThreadID){
         uint2 stct = UnpackStct(anchors[pInd + bSTART_anchors].stct);
         uint portIndex = GetBasePortIndex(stct.y, GetBaseFaceFromObjectFace((uint)dir, stct.x));
 
-        InterlockedAdd(counters[bSTART_capCounts + containedFlat], 1, containedSlot);
-        SocketCaps[bSTART_caps + containedFlat * bSTEP_batch + containedSlot] =
-            MakeSocketCap(portIndex, GetPartialEnd(ep), (uint)dir, (int)id.x);
-    } else {
-        if (!all(ep.start == ep.end)) {
-        InterlockedAdd(counters[bSTART_batchCounts + containedFlat], 1, containedSlot);
-        batchLines[bSTART_batch + containedFlat * bSTEP_batch + containedSlot] = (int)id.x;}
-    }
-
-    int3 minLocal = clamp(minPt, (int3)0, (int3)(numVoxelsPerChunk - 1));
-    int3 maxLocal = clamp(maxPt, (int3)0, (int3)(numVoxelsPerChunk - 1));
-    int3 binMin = int3(
-        CeilDiv(minLocal.x - 2 * binSize + 1, binSize),
-        CeilDiv(minLocal.y - 2 * binSize + 1, binSize),
-        CeilDiv(minLocal.z - 2 * binSize + 1, binSize)
-    );
-    int3 binMax = int3(
-        (maxLocal.x + binSize) / binSize,
-        (maxLocal.y + binSize) / binSize,
-        (maxLocal.z + binSize) / binSize
-    );
-    binMin = clamp(binMin, (int3)0, (int3)(numBinsPerAxis - 1));
-    binMax = clamp(binMax, (int3)0, (int3)(numBinsPerAxis - 1));
-
-    for (int x = binMin.x; x <= binMax.x; x++) {
-        for (int y = binMin.y; y <= binMax.y; y++) {
-            for (int z = binMin.z; z <= binMax.z; z++) {//
-                int binIndex = (int)indexFromCoordManual((uint)x, (uint)y, (uint)z, (uint)numBinsPerAxis);
-                AddPathToBin(binIndex, (int)id.x, containedFlat);
-            }
-        }
+        uint3 capMeta = MakeSocketCapMeta(portIndex, GetPartialEnd(ep), (uint)dir, INVALID_OWNER_ID, 0u, false);
+        EnqueueCapShared(capMeta);
     }
 }

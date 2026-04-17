@@ -1,0 +1,382 @@
+Jigsaw Structure Generation Plan
+
+Source: user-provided draft
+
+Overview
+This pipeline generates structure systems by:
+1. Seeding anchor structures from sampled grid cells.
+2. Building paths between compatible anchors.
+3. Extending and capping dangling sockets.
+4. Spatially binning generated structures.
+5. Pruning intersecting structures by depth and priority.
+6. Emitting the surviving structures into the final generation buffer.
+
+--------------------------------------------------
+1. Jigsaw Path Setup
+--------------------------------------------------
+Goal:
+Initialize anchor cells, determine connectivity, and place the first anchor structures.
+
+Steps:
+- For each grid cell, determine which StructureSystemID it belongs to.
+  - Base this on the sampled biome at the cell center plus 2–3 additional noise maps.
+- Poisson-sample some integer grid cells to become anchor points.
+- Each anchor point adopts the unique StructureSystemID of its parent cell.
+- Bin anchor points into StructureSystems by StructureSystemID.
+- Determine which anchor cells should connect to which others.
+  - For each anchor cell, search a fixed radius only in the positive direction.
+  - Each anchor cell owns the connections it discovers.
+- Assign an anchor jigsaw piece based on:
+  - The anchor's world position.
+  - Its required set of connections.
+- Test whether any jigsaw piece satisfies both:
+  - The required socket configuration.
+  - All additional placement checks.
+- If a valid piece exists, append it to the Intermediate Generated Structures Region with depth = 0.
+
+--------------------------------------------------
+2. Sanitization Pass
+--------------------------------------------------
+Goal:
+Prepare partially constructed paths for later processing.
+
+Rules:
+- If a path is partial and has only one valid end:
+  - Discard the path body.
+  - Preserve the dangling connection so it can be treated as a socket-connected cap later.
+- If a path has no valid ends:
+  - Discard it completely.
+- All remaining valid paths are copied into a separate buffer region for later pathfinding.
+
+--------------------------------------------------
+3. Pathfinding Data Model and Buffer Layout
+--------------------------------------------------
+Goal:
+Define the per-path memory model and shared GPU buffer layout.
+
+Per-path pathfinding resources:
+- Each path gets its own visited region and frontier queue.
+- The size of this region is based on the path length cubed.
+- The visited/frontier space spans a cube of radius (pathLength / 2) centered at the midpoint of the path line.
+
+Visited node layout (8 bytes total):
+- 1 uint: pathId
+- 1 uint: packed node metadata
+  - direction
+  - step count
+  - transition queue index
+
+Frontier node layout (4 bytes total):
+- 1 packed uint index into the visited array for the next node to explore.
+
+Shared buffers:
+- Visited buffer region: about 75 MB
+- Frontier buffer region: about 37.5 MB
+- MAX_TOTAL_PATH_SIZE = floor(75 MB / 8 bytes)
+
+Prefix-sum / bookkeeping buffers:
+- BATCH_PREFIX
+  - Length: MAX_PATH_COUNT
+  - Stride: 8 bytes
+  - Stores per-batch prefix information
+- PATH_PREFIX
+  - Length: MAX_PATH_COUNT
+  - Stride: 12 bytes
+  - Stores per-path prefix information
+- BATCH_PATH_LIST
+  - Length: MAX_PATH_COUNT
+  - Stride: 4 bytes
+  - Stores packed path ids in planner order
+- Dangling sockets buffer
+  - Stride: 12 bytes
+  - Stores packed port/localCoord data and owner metadata
+- Intermediate Structure Append Region
+  - Stores structure placement records and metadata:
+    - depth: 6 bits
+    - isCap flag: 1 bit
+    - owner id (main path id or cap-path id): 24 bits
+    - parent spawning depth: 6 bits
+- danglingDepths
+  - Stride: 8 bytes (uint2)
+  - One entry per cap-path instance (capCount)
+  - x: min surviving depth for this cap-path
+  - y: parent spawning main-path id
+  - Cleared before use
+- maxDepths
+  - Stride: 4 bytes
+  - Tracks max allowed depth for each main path
+  - Cleared before use
+
+--------------------------------------------------
+4. Count Path Sizes
+--------------------------------------------------
+Execution:
+- 1 kernel
+- 1 CPU dispatch
+
+Goal:
+Compute how much visited/frontier memory each path requires and partition paths into batches.
+
+Method:
+- For each path:
+  - Compute pathVisitedSize as the cube of the maximum component of (path.end - path.start).
+- Maintain cumulative planner scratch state:
+  - cumulativePathCount
+  - cumulativeSize
+  - batchPathCount
+  - batchSize
+  - batchIndex
+- Scratch state is updated inside a lock / critical section.
+
+Suggested synchronization logic:
+- Use InterlockedCompareExchange as a spinlock on plannerScratch.lockWord.
+- General flow:
+  - Read lockWord.
+  - If locked, spin / continue.
+  - Attempt to acquire lock.
+  - In critical section:
+    - Add the current path's required size to cumulativeSize.
+    - If the current batch would exceed MAX_TOTAL_PATH_SIZE:
+      - Increment batchIndex.
+      - Store the current batch boundary into BATCH_PREFIX.
+    - Write PATH_PREFIX for this path:
+      - batch index
+      - previous cumulative path-size offset
+      - reserved size for this path
+    - Write path id into BATCH_PATH_LIST at cumulativePathCount.
+    - Increment cumulativePathCount and release lock.
+
+Outputs:
+- BATCH_PREFIX stores cumulative path-count and size boundaries for each batch.
+- PATH_PREFIX stores the batch-relative memory location for each path.
+- BATCH_PATH_LIST stores path ids for per-batch indirect dispatch lookup.
+
+--------------------------------------------------
+5. Unfold Prefix Sums
+--------------------------------------------------
+Execution:
+- 1 kernel
+- 1 CPU dispatch
+
+Goal:
+Convert cumulative prefix information into actual per-batch and per-path local offsets.
+
+Method:
+- Run one linear pass through the prefix arrays.
+- Subtract the previous batch's cumulative size from each path's stored path offset.
+- Example:
+  - PATH_PREFIX[n].y -= BATCH_PREFIX[PATH_PREFIX[n].x - 1].pathSize
+
+Result:
+- Each path now has an offset relative to the start of its own batch.
+
+--------------------------------------------------
+6. Construct DispatchArgs from Prefix Data
+--------------------------------------------------
+Execution:
+- 1 kernel
+- 1 CPU dispatch
+- 1 thread per batch
+
+Goal:
+Build indirect dispatch arguments for the batched pathfinding passes.
+
+Method:
+- For each batch:
+  - Determine the number of paths inside it.
+  - Emit one worker-group count per path-processing stage.
+- Dispatch args currently include exactly 2 stages per batch:
+  - Stage 0: path construction
+  - Stage 1: path backtracking
+
+--------------------------------------------------
+7. Clear Visited Batch
+--------------------------------------------------
+Execution:
+- 1 kernel
+- 1 CPU dispatch
+- 1 thread per PathNode entry up to clearNodeCount
+
+Goal:
+Prepare the visited buffer for reuse.
+
+Method:
+- For every visited entry:
+  - Set VisitedArray[index].pathId = -1
+  - Set VisitedArray[index].visited = INVALID_VISITED
+
+Note:
+- During pathfinding, a node is considered unvisited if its stored pathId does not equal the current pathId.
+- This avoids needing to fully clear per-path state between individual path searches.
+
+--------------------------------------------------
+8. Construct Paths
+--------------------------------------------------
+Execution:
+- Up to maxBatchCount CPU indirect dispatches (one per planner batch slot)
+
+Goal:
+Run bidirectional pathfinding for each path in the batch.
+
+Method:
+- Reuse the current PopulatePaths logic.
+- For each path:
+  - Start of visited region = bSTART_visited + PATH_PREFIX[pathSlot].y
+  - Start of frontier region = bSTART_frontier + PATH_PREFIX[pathSlot].y
+- Use bidirectional search.
+- Track:
+  - The meet point on success.
+  - The corresponding node reached from the opposite search direction.
+
+Visited-state rule:
+- A node is UNVISITED iff visitedNode.pathId != currentPathId.
+
+--------------------------------------------------
+9. Backtrack Paths
+--------------------------------------------------
+Execution:
+- 1 CPU dispatch per batch using indirect args
+
+Goal:
+Recover successful paths and emit their generated structures.
+
+Method:
+- Starting from the meet point, backtrack toward both endpoints.
+- Append structures into the Intermediate Structure Region as the path is reconstructed.
+- Each visited node stores step count, which is used as structure depth.
+- While backtracking, collect every dangling socket along the path.
+  - A dangling socket is any port not directly consumed by the main connecting path.
+
+--------------------------------------------------
+10. Cap Dangling Sockets
+--------------------------------------------------
+Execution:
+- 1 CPU indirect dispatch total using count-to-args from the shared cap counter
+
+Goal:
+Extend dangling sockets into hallways or dead ends.
+
+Method:
+- Build one shared dangling-socket list in slot 0:
+  - Sanitization appends partial-endpoint caps.
+  - Backtracking appends path-derived open sockets.
+- In CapDanglingSockets, each thread id (cap-path id) initializes one danglingDepths entry.
+- Dispatch CapDanglingSockets once using count-to-args from the shared cap counter.
+- Randomly append structures until a dead end is produced.
+  - Hallway = any structure with exactly two ports.
+  - Dead end = any structure with exactly one port.
+- Depth propagation rule:
+  - depth(child) = depth(parent) + 1
+
+--------------------------------------------------
+11. Create Structure Bins
+--------------------------------------------------
+Execution:
+- 1 kernel
+- 1 pass
+
+Goal:
+Create a spatial acceleration structure for intersection testing.
+
+Method:
+- Divide the world into bins, for example 8x8 cells.
+- For each structure in the Intermediate Generated Structures Region:
+  - Compute its rotated bounds.
+  - Insert its structure index into the linked list of every overlapped bin.
+
+--------------------------------------------------
+12. Calculate Minimum Allowed Structure Depths
+--------------------------------------------------
+Execution:
+- 1 kernel
+- 1 pass
+
+Goal:
+Detect structure collisions and determine how far each path may survive before pruning.
+
+Method:
+- For each structure:
+  - Inspect every bin it overlaps.
+  - Compare against every other structure in those bins.
+  - Ignore self-comparisons.
+- If two structures intersect:
+  - The lower-depth structure wins.
+  - If both depths are equal:
+    - Break ties using a deterministic random priority derived from their origin positions.
+- If a structure loses:
+  - Set the maxDepth of its owning path/cap to that structure's depth.
+
+Where maxDepth is written:
+- If the structure belongs to a cap path:
+  - Write into danglingDepths[capPathId].x
+- If it belongs to a main path:
+  - Write into maxDepths
+
+Special case:
+- Ignore depth = 0 structures.
+  - These are anchor jigsaw pieces and should not be pruned here.
+
+--------------------------------------------------
+13. Emit Final Structures
+--------------------------------------------------
+Execution:
+- 1 kernel
+- 1 pass
+
+Goal:
+Copy all surviving structures from the intermediate buffer into the final generating-structures buffer.
+
+Rules:
+- For each main-path structure:
+  - If structure.depth < maxDepths[pathId], append it to the final output.
+- For each cap-path structure:
+  - Append it only if both conditions hold:
+    1. structure.depth < danglingDepths[capPathId].x
+    2. The parent main path from danglingDepths[capPathId].y still survives up to at least the spawning depth
+
+--------------------------------------------------
+14. CPU / Dispatch Note
+--------------------------------------------------
+Important constraint:
+- The CPU does not know in advance how many batches the GPU created.
+- Therefore, the CPU issues pathfind/backtrack indirect dispatches up to maxBatchCount.
+
+Suggested bound:
+- MAX_BATCH_COUNT = MAX_PATH_COUNT / (BUFFER_REGION_SIZE / MAX_PATH_RESOURCE_SIZE)
+
+Because of this:
+- InitPathPlannerState clears the full dispatch-arg region first.
+- BuildBatchDispatchArgs only fills active entries for stage 0 and stage 1.
+- Any unused batch dispatch remains zero and does no work.
+- Cap dispatch is separate and uses count-to-args from the shared cap counter instead of per-batch planner dispatch args.
+
+--------------------------------------------------
+15. Notes / Missing Details
+--------------------------------------------------
+- Several required buffer regions are not fully specified in the original draft.
+- Only the parts that seemed ambiguous were described in the Pathfinding Data Model and Buffer Layout sections.
+- Exact packed bit layouts, append-buffer formats, and path-node encodings can be filled in later once the control flow is finalized.
+- Generally buffer regions should be mutually exclusive, but some regions may also possibly never be used at the same time in which 
+case they could occupy the same buffer region
+- All 'buffer regions' are different parts of one large 'GenerationBuffer'.
+
+Example Shared Linked List Structure:
+    void AddPathToBin(int binIndex, int pathId) {
+        int newIndex;
+        InterlockedAdd(counters[bCOUNT_binList], 1, newIndex);
+        if (newIndex >= binListCapacity)
+            return;
+
+        int oldValue = binHeads[bSTART_binHeads + binIndex];
+        int replaced;
+        [loop]
+        while (true) {
+            InterlockedCompareExchange(binHeads[bSTART_binHeads + binIndex], oldValue, newIndex, replaced);
+            if (replaced == oldValue)
+                break;
+            oldValue = replaced;
+        }
+
+        binList[bSTART_binList + newIndex].prev = oldValue;
+        binList[bSTART_binList + newIndex].pathId = pathId;
+}

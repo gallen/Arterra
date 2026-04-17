@@ -15,11 +15,6 @@ StructuredBuffer<PortSocketOption> _PortSocketOptions;
 StructuredBuffer<SocketPortTransitions> _SocketPortAtlas;
 StructuredBuffer<TransDeltas> _TransitionDeltasAtlas;
 
-bool IsInsideBatch(int3 coord) {
-    int3 extent = int3(batchSize, batchSize, batchSize);
-    return !any(coord < 0) && !any(coord >= extent);
-}
-
 float3 GetSocketBasePosition(uint3 size, float2 uv, uint baseFace) {
     float align = baseFace < 3u ? 0.0 : 1.0;
 
@@ -55,10 +50,6 @@ uint GetRotatedPortMask(uint basePorts, uint rotMeta)
     }
     return rotatedMask;
 }
-
-bool HasRandYRot(uint config) { return (config & 0x1u) != 0u; }
-bool HasRandXRot(uint config) { return (config & 0x2u) != 0u; }
-bool HasRandZRot(uint config) { return (config & 0x4u) != 0u; }
 
 uint GetBasePortIndex(uint sysStructIndex, uint baseFace)
 {
@@ -97,10 +88,6 @@ int3 GetSocketObjectPosition(int3 origin, uint sysStructIndex, uint rotMeta, uin
     return origin + GetSocketOffset(sysStructIndex, rotMeta, objectFace);
 }
 
-int3 GetOriginFromSocket(int3 socketObj, uint sysStructIndex, uint rotMeta, uint objectFace) {
-    return socketObj - GetSocketOffset(sysStructIndex, rotMeta, objectFace);
-}
-
 uint GetSocketFaceAtWorldPos(int3 socketWorldPos, int3 originWorld, uint sysStructIndex, uint rotMeta)
 {
     [unroll]
@@ -135,6 +122,28 @@ bool CanConnectPorts(uint currentPortIndex, uint currentObjectFace, uint nextPor
     }
 
     return false;
+}
+
+
+bool InsideBatch(int3 coord, uint axis)
+{
+    int3 extent = int3((int)axis, (int)axis, (int)axis);
+    return !any(coord < 0) && !any(coord >= extent);
+}
+
+
+uint PathIndexFromCoordAxis(int3 coord, uint axis)
+{
+    uint safeAxis = max(axis, 1u);
+    int maxCoord = (int)safeAxis - 1;
+    int3 clamped = clamp(coord, int3(0, 0, 0), int3(maxCoord, maxCoord, maxCoord));
+    return indexFromCoordManual((uint3)clamped, safeAxis);
+}
+
+
+int3 CoordFromPathIndexAxis(uint index, uint axis)
+{
+    return coordFromIndexManual(index, max(axis, 1u));
 }
 
 

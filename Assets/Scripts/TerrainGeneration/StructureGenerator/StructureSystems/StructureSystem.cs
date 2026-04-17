@@ -114,6 +114,13 @@ public struct StructSystem {
 
                 JigsawSystem.JigsawSocket[] socketsByFace = IndexSocketsByFace(sourceStructure.Sockets.value);
                 StructurePort[] baseStructurePorts = new StructurePort[6];
+                for (int face = 0; face < baseStructurePorts.Length; face++) {
+                    baseStructurePorts[face] = new StructurePort {
+                        socketSystemId = -1,
+                        UV = float2.zero,
+                        sockets = int2.zero,
+                    };
+                }
                 uint basePorts = 0u;
 
                 for (int face = 0; face < socketsByFace.Length; face++) {
@@ -327,7 +334,9 @@ public struct StructSystem {
             float3 length = math.mul(rotMatrix, (float3)settings.GridSize);
             float3 newOrigin = math.min(length, 0.0f);
             float3 baseSocket = GetSocketBasePosition(settings.GridSize, port.UV, baseFace);
-            return (int3)math.round(math.mul(rotMatrix, baseSocket) - newOrigin);
+            // Match HLSL int conversion semantics (truncate toward zero) so CPU atlas
+            // deltas line up exactly with GPU socket/object position helpers.
+            return (int3)(math.mul(rotMatrix, baseSocket) - newOrigin);
         }
 
         private static JigsawSystem.JigsawSocket[] IndexSocketsByFace(List<JigsawSystem.JigsawSocket> sockets)

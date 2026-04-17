@@ -1,0 +1,189 @@
+#pragma kernel CountPathSizes
+#pragma kernel FinalizePathPlanner
+#pragma kernel ClearVisitedPathIds
+
+#include "Assets/Resources/Compute/Utility/GetIndex.hlsl"
+#include "Assets/Resources/Compute/TerrainGeneration/Structures/StructureSystem/StructurePathTypes.hlsl"
+
+const static uint INVALID_BATCH = 0xFFFFFFFFu;
+const static int CLEAR_THREADS = 256;
+const static uint DISPATCH_STAGES_PER_BATCH = 2u;
+const static uint DISPATCH_ARGS_WORD = 3u;
+
+uint bCOUNT_paths;
+uint bSTART_endpts;
+uint bSTART_pathPrefix;
+uint bSTART_batchPrefix;
+uint bSTART_dispatchArgs;
+uint bSTART_batchRanges;
+uint bSTART_batchPathList;
+uint bSTART_visited;
+
+uint maxBatchCount;
+uint maxVisitedNodesPerBatch;
+uint maxPathsPerBatch;
+uint pathfindDispatchDivisor;
+uint backtrackDispatchDivisor;
+uint clearNodeCount;
+
+StructuredBuffer<pathEnds> endPoints;
+RWStructuredBuffer<int> counters;
+RWStructuredBuffer<uint3> pathPrefix;
+RWStructuredBuffer<uint2> batchPrefix;
+RWStructuredBuffer<uint2> batchRanges;
+RWStructuredBuffer<uint> dispatchArgs;
+RWStructuredBuffer<int> batchPathList;
+RWStructuredBuffer<PathNode> batchVisit;
+
+struct IndirectDispatchArgs {
+    uint threadGroupsX;
+    uint threadGroupsY;
+    uint threadGroupsZ;
+};
+
+uint BatchRangeBase(uint batch) {
+    return bSTART_batchRanges + batch;
+}
+
+void WriteBatchRange(uint batch, uint2 range) {
+    uint baseIndex = BatchRangeBase(batch);
+    batchRanges[baseIndex] = range;
+}
+
+uint DispatchArgsBase(uint slot) {
+    return bSTART_dispatchArgs + slot * DISPATCH_ARGS_WORD;
+}
+
+uint DivideRoundUp(uint value, uint divisor) {
+    return (value + divisor - 1u) / divisor;
+}
+
+IndirectDispatchArgs MakeDispatchArgs(uint itemCount, uint divisor) {
+    IndirectDispatchArgs args;
+    uint safeDivisor = max(divisor, 1u);
+    args.threadGroupsX = DivideRoundUp(itemCount, safeDivisor);
+    args.threadGroupsY = 1u;
+    args.threadGroupsZ = 1u;
+    return args;
+}
+
+void WriteDispatchArgs(uint slot, IndirectDispatchArgs args) {
+    uint baseIndex = DispatchArgsBase(slot);
+    dispatchArgs[baseIndex + 0u] = args.threadGroupsX;
+    dispatchArgs[baseIndex + 1u] = args.threadGroupsY;
+    dispatchArgs[baseIndex + 2u] = args.threadGroupsZ;
+}
+
+bool IsNoEnds(pathEnds value) {
+    return all(value.start == NO_ENDS_COORD) && all(value.end == NO_ENDS_COORD);
+}
+
+bool IsPartialEnds(pathEnds value) {
+    return all(value.start == NO_ENDS_COORD) != all(value.end == NO_ENDS_COORD);
+}
+
+uint ComputePathVisitedSize(pathEnds endpoints) {
+    if (IsNoEnds(endpoints))
+        return 0u;
+
+    // Partial paths are sanitized into cap work and should not allocate planner pathfinding state.
+    if (IsPartialEnds(endpoints))
+        return 0u;
+
+    int3 absDelta = abs(endpoints.end - endpoints.start) + int3(1, 1, 1);
+    int axis = max(absDelta.x, max(absDelta.y, absDelta.z));
+    int3 delta = int3(axis, axis, axis);
+
+    return (uint)(delta.x * delta.y * delta.z);
+}
+
+[numthreads(CLEAR_THREADS, 1, 1)]
+void CountPathSizes(uint3 id : SV_DispatchThreadID)
+{
+    uint pathCount = (uint)max(counters[bCOUNT_paths], 0);
+    uint pathId = id.x;
+    if (pathId >= pathCount)
+        return;
+
+    pathEnds endpoints = endPoints[bSTART_endpts + pathId];
+    uint requiredSize = ComputePathVisitedSize(endpoints);
+    if (requiredSize == 0u || requiredSize > maxVisitedNodesPerBatch) {
+        pathPrefix[bSTART_pathPrefix + pathId] = uint3(INVALID_BATCH, 0u, 0u);
+        return;
+    }
+
+    // Temporarily store only required size; later passes assign compact index and batch.
+    pathPrefix[bSTART_pathPrefix + pathId] = uint3(0u, 0u, requiredSize);
+}
+
+[numthreads(1, 1, 1)]
+void FinalizePathPlanner(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x != 0u)
+        return;
+
+    uint pathCount = (uint)max(counters[bCOUNT_paths], 0);
+    uint maxBatchIndex = maxBatchCount - 1u;
+
+    uint batchIndex = 0u;
+    uint batchPathCount = 0u;
+    uint batchSize = 0u;
+    uint cumulativePathCount = 0u;
+    uint cumulativeSize = 0u;
+
+    for (uint pathId = 0u; pathId < pathCount; pathId++) {
+        uint3 data = pathPrefix[bSTART_pathPrefix + pathId];
+        uint requiredSize = data.z;
+        if (requiredSize == 0u) continue;
+
+        if ((batchPathCount > 0u && (batchSize + requiredSize > maxVisitedNodesPerBatch)) || (batchPathCount >= maxPathsPerBatch)) {
+            if (batchIndex <= maxBatchIndex) 
+                batchPrefix[bSTART_batchPrefix + batchIndex] = uint2(cumulativePathCount, cumulativeSize);
+            batchIndex++;
+            batchPathCount = 0u;
+            batchSize = 0u;
+        }
+
+        uint compactIndex = cumulativePathCount;
+        uint localOffset = batchSize;
+        uint reservedBatch = min(batchIndex, maxBatchIndex);
+        batchPathList[bSTART_batchPathList + compactIndex] = (int)pathId;
+        pathPrefix[bSTART_pathPrefix + pathId] = uint3(reservedBatch, localOffset, requiredSize);
+
+        cumulativePathCount++;
+        cumulativeSize += requiredSize;
+        batchPathCount++;
+        batchSize += requiredSize;
+    }
+
+    uint tailPathCount = cumulativePathCount;
+    uint tailSize = cumulativeSize;
+    if (cumulativePathCount > 0u && batchIndex <= maxBatchIndex)
+        batchPrefix[bSTART_batchPrefix + batchIndex] = uint2(tailPathCount, tailSize);
+
+    uint fillStart = cumulativePathCount > 0u ? min(batchIndex + 1u, maxBatchCount) : 0u;
+    for (uint i = fillStart; i < maxBatchCount; i++)
+        batchPrefix[bSTART_batchPrefix + i] = uint2(tailPathCount, tailSize);
+
+    uint prevCount = 0u;
+    for (uint batch = 0u; batch < maxBatchCount; batch++) {
+        uint currentCount = batchPrefix[bSTART_batchPrefix + batch].x;
+        uint batchCount = currentCount - prevCount;
+        WriteBatchRange(batch, uint2(prevCount, batchCount));
+        WriteDispatchArgs(batch * DISPATCH_STAGES_PER_BATCH + 0u, MakeDispatchArgs(batchCount, pathfindDispatchDivisor));
+        WriteDispatchArgs(batch * DISPATCH_STAGES_PER_BATCH + 1u, MakeDispatchArgs(batchCount, backtrackDispatchDivisor));
+        prevCount = currentCount;
+    }
+}
+
+[numthreads(CLEAR_THREADS, 1, 1)]
+void ClearVisitedPathIds(uint3 id : SV_DispatchThreadID)
+{
+    if (id.x >= clearNodeCount)
+        return;
+
+    PathNode node;
+    node.id = -1;
+    node.visited = INVALID_VISITED;
+    batchVisit[bSTART_visited + id.x] = node;
+}

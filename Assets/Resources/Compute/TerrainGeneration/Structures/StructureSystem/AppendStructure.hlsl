@@ -20,28 +20,21 @@ inline void UnpackStctMeta(uint meta, out uint index, out uint rotMeta) {
 }
 
 RWStructuredBuffer<int> counters;
-RWStructuredBuffer<structureData> genStructures; //final output structures
+RWStructuredBuffer<intermediateStructureData> genStructures;
 uint bCOUNT_struct;
 uint bSTART_struct;
 
-void AppendStructure(structureData st) {
-    uint index; uint rotMeta;
-    UnpackStctMeta(st.meta, index, rotMeta);
-    uint3 rot = GetRot(rotMeta);
-    settings set = _StructureSettings[index];
-
-    float3x3 rotMatrix = RotationLookupTable[rot.y][rot.x][rot.z];
-    float3 length = abs(mul(rotMatrix, set.size));
-    int3 origin = floor(st.structurePos);
-
-    if(any(origin + length) < 0) 
-        return;
-    if(any(origin) > numVoxelsPerChunk)
-        return;
-
+void AppendStructureWithInfo(structureData st, uint2 info) {
     int appendInd;
     InterlockedAdd(counters[bCOUNT_struct], 1, appendInd);
-    genStructures[bSTART_struct + appendInd] = st;
+    intermediateStructureData entry;
+    entry.structure = st;
+    entry.info = info;
+    genStructures[bSTART_struct + appendInd] = entry;
+}
+
+void AppendStructure(structureData st) {
+    AppendStructureWithInfo(st, PackStructInfo(0u, false, INVALID_OWNER_ID, 0u));
 }
 
 #endif

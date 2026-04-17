@@ -8,27 +8,18 @@
 
 const static int threadGroupSize = 256;
 
-//numPointsPerAxis = batchSize 
-int batchesPerChunk;
-int3 batchOffset;
-int3 oCCoord;
-
-uint bSTEP_batch;
-uint bSTART_batchCounts;
-
-uint bSTART_batch;
+uint bSTART_batchPathList;
+uint bSTART_batchRanges;
 uint bSTART_endpts;
 uint bSTART_paths;
 uint bSTART_anchors;
 uint bSTART_visited;
 uint bSTART_pathMeet;
-uint bSTART_frontierPrefix;
+uint bSTART_pathPrefix;
 uint bSTART_frontier;
 
-StructuredBuffer<int> overlapLines;
-StructuredBuffer<int> batchLines;
-
-StructuredBuffer<int> counters1;
+StructuredBuffer<uint2> batchRanges;
+StructuredBuffer<int> batchPathList;
 StructuredBuffer<pathEnds> endPoints;
 StructuredBuffer<anchor> anchors;
 StructuredBuffer<uint3> anchorPaths;
@@ -36,9 +27,9 @@ StructuredBuffer<uint3> anchorPaths;
 RWStructuredBuffer<PathNode> batchVisit;
 RWStructuredBuffer<uint2> pathMeet;
 RWStructuredBuffer<uint> frontierBuffer;
-StructuredBuffer<uint> frontierPrefix;
+StructuredBuffer<uint3> pathPrefix;
 
-struct sysInfo {//
+struct sysInfo {
     float edgeFrequency;
     float anchorDensity;
     uint2 structures;
@@ -47,11 +38,16 @@ struct sysInfo {//
 StructuredBuffer<sysInfo> _SystemInfo;
 StructuredBuffer<uint2> _StructureIndexes;
 StructuredBuffer<checkData> _StructureChecks;
-uint batchIndex;//
+uint batchIndex;
 
 bool TrySetVisited(uint index, int pathId, uint desired) {
-    if (batchVisit[index].id != pathId)
-        return false;
+    PathNode node = batchVisit[index];
+    if (node.id != pathId) {
+        // Treat stale IDs from previous batches as unvisited for this path region.
+        node.id = pathId;
+        node.visited = INVALID_VISITED;
+        batchVisit[index] = node;
+    }
 
     if (VisitedTransitionIndex(batchVisit[index].visited) == VISITED_SEED_TRANSITION)
         return false;
@@ -60,7 +56,6 @@ bool TrySetVisited(uint index, int pathId, uint desired) {
     InterlockedMax(batchVisit[index].visited, desired, old);
     return old == INVALID_VISITED;
 }
-
 
 bool VerifyChecks(uint structureIndex, uint3 rot, float3 origin)
 {
@@ -92,20 +87,6 @@ bool VerifyPathBounds(uint pathIndex, uint sysStructIndex, uint rotMeta, int3 or
     int3 span = max(int3(abs(mul(rotMatrix, (float3)structureSettings.size))), int3(1, 1, 1));
     int3 farCorner = max(span - 1, int3(0, 0, 0));
 
-    [unroll]
-    for (uint corner = 0u; corner < 8u; corner++) {
-        int3 cornerOffset = int3((corner & 0x1u) != 0u ? farCorner.x : 0,
-            (corner & 0x2u) != 0u ? farCorner.y : 0,
-            (corner & 0x4u) != 0u ? farCorner.z : 0);
-        int3 localCorner = origin - batchOffset + cornerOffset;
-
-        //if (!IsInsideBatch(localCorner))
-        //    return false;
-        int cornerFlat = indexFromCoord(localCorner) + bSTART_visited;
-        //if (batchVisit[cornerFlat].id != (int)pathIndex)
-        //    return false;
-    }
-
     if (!VerifyChecks(systemStructure.structureIndex, rot, (float3)origin))
         return false;
 
@@ -122,9 +103,11 @@ groupshared uint2 gEndpointPortFace[2];
 groupshared int3 gEndpointObjectPos[2];
 groupshared uint gMeetFound;
 groupshared uint gMeetIndex;
+groupshared uint gPathAxis;
+groupshared uint gVisitedStart;
+groupshared int3 gPathOffset;
 
-void GetSeedPortFace(uint dir, out uint portIndex, out uint objectFace)
-{
+void GetSeedPortFace(uint dir, out uint portIndex, out uint objectFace) {
     if (dir == 0u) {
         portIndex = gEndpointPortFace[1].x;
         objectFace = gEndpointPortFace[1].y;
@@ -134,8 +117,7 @@ void GetSeedPortFace(uint dir, out uint portIndex, out uint objectFace)
     }
 }
 
-void GetPortFaceFromVisited(uint visited, out uint portIndex, out uint objectFace)
-{
+void GetPortFaceFromVisited(uint visited, out uint portIndex, out uint objectFace) {
     uint dir = VisitedFromEnd(visited) ? 1u : 0u;
     uint transitionIndex = VisitedTransitionIndex(visited);
     if (transitionIndex == VISITED_SEED_TRANSITION) {
@@ -149,15 +131,12 @@ void GetPortFaceFromVisited(uint visited, out uint portIndex, out uint objectFac
     objectFace = GetObjectFaceFromBaseFace(GetPortBaseFace(portIndex), nextMeta.x);
 }
 
-
-void RecordMeetPoint(uint meetIndex)
-{
+void RecordMeetPoint(uint meetIndex) {
     InterlockedMax(gMeetFound, 1u);
     InterlockedMax(gMeetIndex, meetIndex);
 }
 
-bool TryMarkMeetFromExisting(PathNode existing, uint dir, TransDeltas transition, uint2 nextMeta, uint outgoingIndex, uint candidateVisited)
-{
+bool TryMarkMeetFromExisting(PathNode existing, uint dir, TransDeltas transition, uint2 nextMeta, uint outgoingIndex, uint candidateVisited) {
     if (existing.id != gPathIndex)
         return false;
     if (VisitedFromEnd(existing.visited) == (dir == 1u))
@@ -180,53 +159,35 @@ int3 ObjectToWorldSpace(int3 objectPos) {
     return objectPos + (int3)sOffset;
 }
 
-uint FrontierIndex(uint globalIndex)
-{
+bool TryGetPathSlot(uint localIndex, out uint pathSlot) {
+    uint2 range = batchRanges[bSTART_batchRanges + batchIndex];
+    uint prevCount = range.x;
+    uint pathCount = range.y;
+    if (localIndex >= pathCount) {
+        pathSlot = INVALID_PATH;
+        return false;
+    }
+
+    pathSlot = (uint)batchPathList[bSTART_batchPathList + prevCount + localIndex];
+    return true;
+}
+
+uint FrontierIndex(uint globalIndex) {
     uint slot = gFrontierCapacity > 0u ? (globalIndex % gFrontierCapacity) : 0u;
     return bSTART_frontier + gFrontierStart + slot;
 }
 
-void AppendFrontierNode(uint localIndex)
-{
+void AppendFrontierNode(uint localIndex) {
     uint slot;
     InterlockedAdd(gTotalVisitedCount, 1u, slot);
-    if (slot >= gFrontierCapacity)
-        return;
     frontierBuffer[FrontierIndex(slot)] = localIndex;
 }
 
-void GetFrontierRange(uint pathSlot, uint batchLocalIndex, out uint prefixStart, out uint prefixEnd)
-{
-    prefixEnd = frontierPrefix[bSTART_frontierPrefix + pathSlot];
-    prefixStart = 0u;
-    if (batchLocalIndex > 0u) {
-        uint prevPathSlot = (uint)batchLines[bSTART_batch + batchIndex * bSTEP_batch + (batchLocalIndex - 1u)];
-        prefixStart = frontierPrefix[bSTART_frontierPrefix + prevPathSlot];
-    }
+void GetFrontierRange(uint pathSlot, out uint prefixStart, out uint prefixEnd) {
+    uint3 prefix = pathPrefix[bSTART_pathPrefix + pathSlot];
+    prefixStart = prefix.y;
+    prefixEnd = prefix.y + prefix.z;
 }
-
-
-
-/*
-Process:
-    - If thread.id == 0:
-        - Seed the frontier with the start socket position and its concrete port index
-
-    while frontier not empty:
-        each thread:
-            take one node from frontier
-            select a random candidate structure bucket from the concrete port atlas
-            verify that candidate at the current socket
-            enqueue all outgoing deltas from that candidate
-
-        barrier()
-        swap(frontier, nextFrontier)
-        reset nextFrontier
-    Frontier Node: uint2(|concretePortIndex|, |batchCoord|)
-*/
-
-uint _StructTestDot;
-uint _StructTestDot1;
 
 [numthreads(threadGroupSize,1,1)]
 void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
@@ -234,83 +195,95 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
     uint threadMeetIndex = INVALID_PATH;
     uint threadMeetVisited = INVALID_VISITED;
 
-    if (groupId.x >= (uint)counters1[bSTART_batchCounts + batchIndex])
-        return;
+    if (groupIndex == 0u) {//
+        uint pathSlot;
+        if (!TryGetPathSlot(groupId.x, pathSlot)) {
+            gPathIndex = -1;
+            gPrevVisitedCount = 0u; gTotalVisitedCount = 0u;
+            gMeetFound = 0u; gMeetIndex = 0u; gFrontierCount = 0u;
+            gFrontierStart = 0u; gFrontierCapacity = 0u;
+            gPathAxis = 1u;
+            gVisitedStart = 0u;
+            gPathOffset = int3(0, 0, 0);
+        } else {
+            uint3 path = anchorPaths[pathSlot + bSTART_paths];
+            anchor startAnchor = anchors[path.x + bSTART_anchors];
+            anchor endAnchor = anchors[path.y + bSTART_anchors];
+            pathEnds endData = endPoints[pathSlot + bSTART_endpts];
+            uint3 prefix = pathPrefix[bSTART_pathPrefix + pathSlot];
 
-    if (groupIndex == 0u) {
-        uint pathSlot = (uint)batchLines[bSTART_batch + batchIndex * bSTEP_batch + groupId.x];
-        uint3 path = anchorPaths[pathSlot + bSTART_paths];
-        anchor startAnchor = anchors[path.x + bSTART_anchors];
-        anchor endAnchor = anchors[path.y + bSTART_anchors];
-        pathEnds endData = endPoints[pathSlot + bSTART_endpts];
+            gPathIndex = (int)pathSlot;
+            int3 absDelta = abs(endData.end - endData.start) + int3(1, 1, 1);
+            gPathAxis = (uint)max(absDelta.x, max(absDelta.y, absDelta.z));
+            gVisitedStart = prefix.y;
+            gPrevVisitedCount = 0u; gTotalVisitedCount = 0u;
+            gMeetFound = 0u; gMeetIndex = 0u; gFrontierCount = 0u;
+            pathMeet[pathSlot + bSTART_pathMeet] = uint2(INVALID_PATH, INVALID_VISITED);
 
-        gPathIndex = (int)pathSlot;
-        gPrevVisitedCount = 0u; gTotalVisitedCount = 0u;
-        gMeetFound = 0u; gMeetIndex = 0u; gFrontierCount = 0u;
-        pathMeet[pathSlot + bSTART_pathMeet] = uint2(INVALID_PATH, INVALID_VISITED);
+            int3 minPt = min(endData.start, endData.end);
+            int3 pathSlack = (int)gPathAxis - absDelta;
+            gPathOffset = minPt - pathSlack / 2;
 
-        uint prefixStart; uint prefixEnd;
-        GetFrontierRange(pathSlot, groupId.x, prefixStart, prefixEnd);
-        gFrontierStart = prefixStart;
-        gFrontierCapacity = prefixEnd > prefixStart ? (prefixEnd - prefixStart) : 0u;
+            GetFrontierRange(pathSlot, gFrontierStart, gFrontierCapacity);
+            gFrontierCapacity -= gFrontierStart;
 
-        if (startAnchor.stct != -1 && endAnchor.stct != -1) {
-            uint2 startStct = UnpackStct((uint)startAnchor.stct);
-            uint2 endStct = UnpackStct((uint)endAnchor.stct);
-            gEndpointObjectPos[0] = endData.end;
-            gEndpointObjectPos[1] = endData.start;
+            if (startAnchor.stct != -1 && endAnchor.stct != -1) {
+                uint2 startStct = UnpackStct((uint)startAnchor.stct);
+                uint2 endStct = UnpackStct((uint)endAnchor.stct);
+                gEndpointObjectPos[0] = endData.end;
+                gEndpointObjectPos[1] = endData.start;
 
-            uint startObjectFace = path.z & 0x7u;
-            uint endObjectFace = (path.z >> 3u) & 0x7u;
-            int3 startLocal = gEndpointObjectPos[1] - batchOffset;
-            int3 endLocal = gEndpointObjectPos[0] - batchOffset;
-            uint startPortIndex = GetBasePortIndex(startStct.y, GetBaseFaceFromObjectFace(startObjectFace, startStct.x));
-            uint endPortIndex = GetBasePortIndex(endStct.y, GetBaseFaceFromObjectFace(endObjectFace, endStct.x));
-            gEndpointPortFace[0] = uint2(endPortIndex, endObjectFace);
-            gEndpointPortFace[1] = uint2(startPortIndex, startObjectFace);
+                uint startObjectFace = path.z & 0x7u;
+                uint endObjectFace = (path.z >> 3u) & 0x7u;
+                int3 startLocal = gEndpointObjectPos[1] - gPathOffset;
+                int3 endLocal = gEndpointObjectPos[0] - gPathOffset;
+                uint startPortIndex = GetBasePortIndex(startStct.y, GetBaseFaceFromObjectFace(startObjectFace, startStct.x));
+                uint endPortIndex = GetBasePortIndex(endStct.y, GetBaseFaceFromObjectFace(endObjectFace, endStct.x));
+                gEndpointPortFace[0] = uint2(endPortIndex, endObjectFace);
+                gEndpointPortFace[1] = uint2(startPortIndex, startObjectFace);
 
-            if (IsInsideBatch(startLocal) && IsInsideBatch(endLocal) && startPortIndex != INVALID_PATH && endPortIndex != INVALID_PATH) {
-                if (all(gEndpointObjectPos[1] == gEndpointObjectPos[0]) && CanConnectPorts(startPortIndex, startObjectFace, endPortIndex, endObjectFace)) {
-                    gMeetFound = 2u;
-                    gMeetIndex = indexFromCoord(startLocal);
-                    pathMeet[gPathIndex + bSTART_pathMeet] = uint2(indexFromCoord(startLocal), INVALID_VISITED);
-                } else {
-                    uint startFlat = indexFromCoord(startLocal) + bSTART_visited;
-                    uint endFlat = indexFromCoord(endLocal) + bSTART_visited;
-                    uint old;
-                    InterlockedMax(batchVisit[startFlat].visited, EncodeVisited(VISITED_SEED_TRANSITION, false, 0u), old);
-                    InterlockedMax(batchVisit[endFlat].visited, EncodeVisited(VISITED_SEED_TRANSITION, true, 0u), old);
-                    AppendFrontierNode(indexFromCoord(startLocal));
-                    AppendFrontierNode(indexFromCoord(endLocal));
+                if (InsideBatch(startLocal, gPathAxis) && InsideBatch(endLocal, gPathAxis) && startPortIndex != INVALID_PATH && endPortIndex != INVALID_PATH) {
+                    if (all(gEndpointObjectPos[1] == gEndpointObjectPos[0]) && CanConnectPorts(startPortIndex, startObjectFace, endPortIndex, endObjectFace)) {
+                        gMeetIndex = PathIndexFromCoordAxis(startLocal, gPathAxis);
+                        pathMeet[gPathIndex + bSTART_pathMeet] = uint2(PathIndexFromCoordAxis(startLocal, gPathAxis), INVALID_VISITED);
+                        gMeetFound = 2u;
+                    } else {
+                        uint startLocalIndex = PathIndexFromCoordAxis(startLocal, gPathAxis);
+                        uint endLocalIndex = PathIndexFromCoordAxis(endLocal, gPathAxis);
+                        uint startFlat = bSTART_visited + gVisitedStart + startLocalIndex;
+                        uint endFlat = bSTART_visited + gVisitedStart + endLocalIndex;
+
+                        batchVisit[startFlat].id = gPathIndex; batchVisit[endFlat].id = gPathIndex;
+                        batchVisit[startFlat].visited = EncodeVisited(VISITED_SEED_TRANSITION, false, 0u);
+                        batchVisit[endFlat].visited = EncodeVisited(VISITED_SEED_TRANSITION, true, 0u);
+
+                        AppendFrontierNode(startLocalIndex);
+                        AppendFrontierNode(endLocalIndex);
+                    }
                 }
             }
-            /*structureData stDat;
-            stDat.structurePos = endData.end;
-            stDat.meta = PackStctMeta(_StructTestDot, 0);
-            AppendStructure(stDat);//
 
-            stDat.structurePos = endData.start;
-            stDat.meta = PackStctMeta(_StructTestDot, 0);
-            AppendStructure(stDat);*///
+            gFrontierCount = gTotalVisitedCount;
         }
-        
-        gFrontierCount = gTotalVisitedCount;
     }
 
     GroupMemoryBarrierWithGroupSync();
+    if (gPathIndex < 0)
+        return;
+
     [loop]
     for (uint step = 0u; step < MAX_BATCH_STEPS; step++) {
         bool processFrontier = (gFrontierCount > 0u) && gMeetFound == 0u;
+        uint frontierCount = gFrontierCount;
 
         if (processFrontier) {
-        uint frontierCount = gFrontierCount;
         for (uint frontierIndex = groupIndex; frontierIndex < frontierCount; frontierIndex += threadGroupSize) {
             uint globalIndex = gPrevVisitedCount + frontierIndex;
             uint localIndex = frontierBuffer[FrontierIndex(globalIndex)];
-            int3 currentLocal = DecodeFrontierNode(localIndex);
-            int currentIndex = indexFromCoord(currentLocal);
+            int3 currentObjectPos = CoordFromPathIndexAxis(localIndex, gPathAxis) + gPathOffset;
+            int currentIndex = (int)localIndex;
 
-            int currentFlat = currentIndex + bSTART_visited;
+            int currentFlat = (int)(currentIndex + gVisitedStart + bSTART_visited);
             if (batchVisit[currentFlat].id != gPathIndex)
                 continue;
 
@@ -319,21 +292,14 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
             uint currentPortIndex; uint currentObjectFace;
             GetPortFaceFromVisited(visited, currentPortIndex, currentObjectFace);
 
-            int3 currentObjectPos = currentLocal + batchOffset;
             int3 targetPos = gEndpointObjectPos[dir];
-
             if (all(currentObjectPos == targetPos) && CanConnectPorts(currentPortIndex, currentObjectFace, gEndpointPortFace[dir].x, gEndpointPortFace[dir].y)) {
-                RecordMeetPoint(currentIndex);
-                threadMeetIndex = currentIndex;
+                RecordMeetPoint((uint)currentIndex);
+                threadMeetIndex = (uint)currentIndex;
                 threadMeetVisited = visited;
-                continue;//
+                continue;
             }
 
-            //structureData stDat;
-            //stDat.structurePos = currentObjectPos;
-            //stDat.meta = PackStctMeta(_StructTestDot, 0);
-            //AppendStructure(stDat);
-            
             float currentEndDistSq = dot((float3)(targetPos - currentObjectPos), (float3)(targetPos - currentObjectPos));
             StructurePort currentPort = _StructurePorts[currentPortIndex];
             int optionCount = currentPort.sockets.y - currentPort.sockets.x;
@@ -341,7 +307,6 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
 
             uint baseSeed = Random(ObjectToWorldSpace(currentObjectPos) ^ currentPortIndex ^ step);
             int selectedOptionIndex = -1;
-            //Choose a random option to explore
             for (int optionOffset = 0; optionOffset < optionCount; optionOffset++) {
                 int optionIndex = currentPort.sockets.x + optionOffset;
                 PortSocketOption candidate = _PortSocketOptions[optionIndex];
@@ -356,8 +321,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
             PortSocketOption selectedOption = _PortSocketOptions[selectedOptionIndex];
             SocketPortTransitions selectedCandidate = _SocketPortAtlas[GetSocketAtlasIndex(currentPortIndex, selectedOption.socketSystemId, OppositeFace(currentObjectFace))];
             if (selectedCandidate.range.x >= selectedCandidate.range.y) continue;
-            
-            //Evaluate all possible transitions given this option
+
             uint transitionCount = (uint)(selectedCandidate.range.y - selectedCandidate.range.x);
             uint transitionsToCheck = min(transitionCount, MAX_TRANSITIONS_PER_NODE);
             uint transitionStartOffset = transitionCount <= transitionsToCheck ? 0u : (baseSeed % transitionCount);
@@ -367,18 +331,17 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                 uint2 nextMeta = UnpackStct((uint)transition.structMeta);
                 int3 originWorld = currentObjectPos + transition.originDelta;
                 int3 outgoingObjectPos = currentObjectPos + transition.deltaPosition;
-                int3 outgoingLocal = outgoingObjectPos - batchOffset;
-                int outgoingIndex = indexFromCoord(outgoingLocal);
+                int3 outgoingLocal = outgoingObjectPos - gPathOffset;
 
-                if (!IsInsideBatch(outgoingLocal)) continue;
-                int outgoingFlat = outgoingIndex + bSTART_visited;
-                if (batchVisit[outgoingFlat].id != gPathIndex) continue;
+                if (!InsideBatch(outgoingLocal, gPathAxis)) continue;
+                int outgoingIndex = (int)PathIndexFromCoordAxis(outgoingLocal, gPathAxis);
+                int outgoingFlat = (int)(outgoingIndex + gVisitedStart + bSTART_visited);
 
-                if (batchVisit[outgoingFlat].visited != INVALID_VISITED) {
-                    PathNode existing = batchVisit[outgoingFlat];
+                PathNode existing = batchVisit[outgoingFlat];
+                if (existing.id == gPathIndex && existing.visited != INVALID_VISITED) {
                     uint candidateVisited = EncodeVisited(transitionIndex, dir == 1u, step + 1u);
-                    if (TryMarkMeetFromExisting(existing, dir, transition, nextMeta, outgoingIndex, candidateVisited)) {
-                        threadMeetIndex = outgoingIndex;
+                    if (TryMarkMeetFromExisting(existing, dir, transition, nextMeta, (uint)outgoingIndex, candidateVisited)) {
+                        threadMeetIndex = (uint)outgoingIndex;
                         threadMeetVisited = candidateVisited;
                     }
                 }
@@ -386,8 +349,8 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                 float outgoingEndDistSq = dot((float3)(targetPos - outgoingObjectPos), (float3)(targetPos - outgoingObjectPos));
                 if (outgoingEndDistSq >= currentEndDistSq) continue;
                 if (!VerifyPathBounds(gPathIndex, nextMeta.y, nextMeta.x, originWorld)) continue;
-                if (!TrySetVisited(outgoingFlat, gPathIndex, EncodeVisited(transitionIndex, dir == 1u, step + 1u))) continue;
-                AppendFrontierNode(outgoingIndex);
+                if (!TrySetVisited((uint)outgoingFlat, gPathIndex, EncodeVisited(transitionIndex, dir == 1u, step + 1u))) continue;
+                AppendFrontierNode((uint)outgoingIndex);
             }
         }}
 

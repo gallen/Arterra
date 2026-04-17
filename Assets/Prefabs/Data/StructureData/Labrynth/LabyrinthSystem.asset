@@ -248,7 +248,7 @@ MonoBehaviour:
             - TargetName: Chambers
               chance: 1
         - Name: Chambers
-          Connection: 4
+          Connection: 2
           UV:
             x: 0.5
             y: 0.6818182
@@ -307,8 +307,8 @@ MonoBehaviour:
             value:
             - TargetName: Chambers
               chance: 1
-  edgeFrequency: 0.5
-  anchorDensity: 0.35
+  edgeFrequency: 1
+  anchorDensity: 1
   references:
     version: 2
     RefIds: []
