@@ -40,7 +40,7 @@ StructuredBuffer<uint2> _StructureIndexes;
 StructuredBuffer<checkData> _StructureChecks;
 uint batchIndex;
 
-bool TrySetVisited(uint index, int pathId, uint desired) {
+bool TrySetVisited(uint index, int pathId, uint desired, out uint previousVisited) {
     PathNode node = batchVisit[index];
     if (node.id != pathId) {
         // Treat stale IDs from previous batches as unvisited for this path region.
@@ -49,11 +49,15 @@ bool TrySetVisited(uint index, int pathId, uint desired) {
         batchVisit[index] = node;
     }
 
-    if (VisitedTransitionIndex(batchVisit[index].visited) == VISITED_SEED_TRANSITION)
+    uint currentVisited = batchVisit[index].visited;
+    if (VisitedTransitionIndex(currentVisited) == VISITED_SEED_TRANSITION) {
+        previousVisited = currentVisited;
         return false;
+    }
 
     uint old;
     InterlockedMax(batchVisit[index].visited, desired, old);
+    previousVisited = old;
     return old == INVALID_VISITED;
 }
 
@@ -136,22 +140,34 @@ void RecordMeetPoint(uint meetIndex) {
     InterlockedMax(gMeetIndex, meetIndex);
 }
 
-bool TryMarkMeetFromExisting(PathNode existing, uint dir, TransDeltas transition, uint2 nextMeta, uint outgoingIndex, uint candidateVisited) {
-    if (existing.id != gPathIndex)
+bool SaveThreadMeet(uint meetIndex, uint meetVisited, inout uint threadMeetIndex, inout uint threadMeetVisited) {
+    if (threadMeetIndex == INVALID_PATH || meetIndex > threadMeetIndex) {
+        threadMeetIndex = meetIndex;
+        threadMeetVisited = meetVisited;
+        return true;
+    }
+
+    if (meetIndex == threadMeetIndex && meetVisited > threadMeetVisited)
+        threadMeetVisited = meetVisited;
+
+    return false;
+}
+
+bool TryMarkMeetFromExisting(uint existingVisited, uint dir, TransDeltas transition, uint2 nextMeta, uint outgoingIndex) {
+    if (existingVisited == INVALID_VISITED)
         return false;
-    if (VisitedFromEnd(existing.visited) == (dir == 1u))
+    if (VisitedFromEnd(existingVisited) == (dir == 1u))
         return false;
 
     uint currentPortIdx = (uint)transition.nextPort;
     uint currentObjectFaceLocal = GetObjectFaceFromBaseFace(GetPortBaseFace(currentPortIdx), nextMeta.x);
     uint otherPortIdx;
     uint otherObjectFace;
-    GetPortFaceFromVisited(existing.visited, otherPortIdx, otherObjectFace);
+    GetPortFaceFromVisited(existingVisited, otherPortIdx, otherObjectFace);
 
     if (!CanConnectPorts(currentPortIdx, currentObjectFaceLocal, otherPortIdx, otherObjectFace))
         return false;
 
-    RecordMeetPoint(outgoingIndex);
     return true;
 }
 
@@ -267,7 +283,7 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
         }
     }
 
-    GroupMemoryBarrierWithGroupSync();
+    AllMemoryBarrierWithGroupSync();
     if (gPathIndex < 0)
         return;
 
@@ -284,19 +300,20 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
             int currentIndex = (int)localIndex;
 
             int currentFlat = (int)(currentIndex + gVisitedStart + bSTART_visited);
-            if (batchVisit[currentFlat].id != gPathIndex)
+
+            PathNode node = batchVisit[currentFlat];
+            uint visited = node.visited;
+            if (node.id != gPathIndex)
                 continue;
 
-            uint visited = batchVisit[currentFlat].visited;
             uint dir = VisitedFromEnd(visited) ? 1u : 0u;
             uint currentPortIndex; uint currentObjectFace;
             GetPortFaceFromVisited(visited, currentPortIndex, currentObjectFace);
 
             int3 targetPos = gEndpointObjectPos[dir];
             if (all(currentObjectPos == targetPos) && CanConnectPorts(currentPortIndex, currentObjectFace, gEndpointPortFace[dir].x, gEndpointPortFace[dir].y)) {
-                RecordMeetPoint((uint)currentIndex);
-                threadMeetIndex = (uint)currentIndex;
-                threadMeetVisited = visited;
+                if (SaveThreadMeet((uint)currentIndex, visited, threadMeetIndex, threadMeetVisited))
+                    RecordMeetPoint((uint)currentIndex);
                 continue;
             }
 
@@ -337,19 +354,18 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
                 int outgoingIndex = (int)PathIndexFromCoordAxis(outgoingLocal, gPathAxis);
                 int outgoingFlat = (int)(outgoingIndex + gVisitedStart + bSTART_visited);
 
-                PathNode existing = batchVisit[outgoingFlat];
-                if (existing.id == gPathIndex && existing.visited != INVALID_VISITED) {
-                    uint candidateVisited = EncodeVisited(transitionIndex, dir == 1u, step + 1u);
-                    if (TryMarkMeetFromExisting(existing, dir, transition, nextMeta, (uint)outgoingIndex, candidateVisited)) {
-                        threadMeetIndex = (uint)outgoingIndex;
-                        threadMeetVisited = candidateVisited;
-                    }
-                }
-
                 float outgoingEndDistSq = dot((float3)(targetPos - outgoingObjectPos), (float3)(targetPos - outgoingObjectPos));
                 if (outgoingEndDistSq >= currentEndDistSq) continue;
                 if (!VerifyPathBounds(gPathIndex, nextMeta.y, nextMeta.x, originWorld)) continue;
-                if (!TrySetVisited((uint)outgoingFlat, gPathIndex, EncodeVisited(transitionIndex, dir == 1u, step + 1u))) continue;
+
+                uint previousVisited;
+                uint candidateVisited = EncodeVisited(transitionIndex, dir == 1u, step + 1u);
+                if (!TrySetVisited((uint)outgoingFlat, gPathIndex, candidateVisited, previousVisited)) {
+                    if (TryMarkMeetFromExisting(previousVisited, dir, transition, nextMeta, (uint)outgoingIndex)) {
+                        if (SaveThreadMeet((uint)outgoingIndex, candidateVisited, threadMeetIndex, threadMeetVisited))
+                            RecordMeetPoint((uint)outgoingIndex);
+                    } continue;
+                }
                 AppendFrontierNode((uint)outgoingIndex);
             }
         }}
@@ -359,11 +375,10 @@ void BatchPathfind(uint3 groupId : SV_GroupID, uint groupIndex : SV_GroupIndex)
             gPrevVisitedCount += gFrontierCount;
             gFrontierCount = gTotalVisitedCount - gPrevVisitedCount;
         }
-        GroupMemoryBarrierWithGroupSync();
+        AllMemoryBarrierWithGroupSync();
     }
 
     GroupMemoryBarrierWithGroupSync();
-
     if (gMeetFound == 1u && threadMeetIndex != INVALID_PATH && threadMeetIndex == gMeetIndex) {
         pathMeet[gPathIndex + bSTART_pathMeet].x = gMeetIndex;
         InterlockedMax(pathMeet[gPathIndex + bSTART_pathMeet].y, threadMeetVisited);
