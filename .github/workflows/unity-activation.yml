@@ -9,13 +9,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
       - name: Request manual Unity activation file
-        uses: game-ci/unity-request-activation-file@v2
-        with:
-          unityVersion: 6000.2.14f1
+        run: |
+          docker run --rm \
+            -v "$PWD:/workspace" \
+            -w /workspace \
+            unityci/editor:ubuntu-6000.2.14f1-base-3 \
+            bash -lc 'xvfb-run --auto-servernum --server-args="-screen 0 640x480x24" unity-editor -batchmode -nographics -quit -createManualActivationFile -logFile /dev/stdout || true; ls -la *.alf'
 
       - name: Upload activation file
         uses: actions/upload-artifact@v4
         with:
           name: Unity_v6000.2.14f1.alf
-          path: Unity_v6000.2.14f1.alf
+          path: "*.alf"
