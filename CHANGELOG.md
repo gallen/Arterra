@@ -1,3 +1,5 @@
+## [0.0.5] - 2026-07-03
+
 ### Fixed
 - Splash mp4 video not playing from github release (disable transcoding in github release)
 
