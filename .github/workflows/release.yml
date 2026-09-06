@@ -40,7 +40,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}          
         with:
-          unityVersion: 6000.2.14f1
+          unityVersion: 6000.5.10f1
           targetPlatform: StandaloneWindows64
           buildsPath: build
 
@@ -80,7 +80,7 @@ jobs:
           UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
           UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
         with:
-          unityVersion: 6000.2.14f1
+          unityVersion: 6000.5.10f1
           targetPlatform: StandaloneOSX
           buildsPath: build
 
