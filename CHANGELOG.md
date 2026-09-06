@@ -1,4 +1,6 @@
 ## [Unreleased]
+
+## [0.0.3] - 2026-09-05
 ### Changed
 - Change Steam Release CI to use TOTP for authentication
 
